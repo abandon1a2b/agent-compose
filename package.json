@@ -1,5 +1,5 @@
 {
-  "name": "agent-harness",
+  "name": "agent-compose",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,5 +15,10 @@
   "devDependencies": {
     "@types/node": "24.19.2",
     "typescript": "5.9.3"
+  },
+  "description": "A lightweight TypeScript agent harness for tools, context, tasks, and human interaction.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abandon1a2b/agent-compose.git"
   }
 }

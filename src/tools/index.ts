@@ -1,6 +1,9 @@
-import type { Tool } from "./types.ts";
+import type { Tool } from "../types.ts";
+
+import { calculate } from "./calculate.ts";
 
 export const tools: Tool[] = [
+  calculate,
   {
     name: "get_current_time",
     description: "获取当前 UTC 时间，用于回答现在几点等问题。",

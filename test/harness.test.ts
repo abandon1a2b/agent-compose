@@ -7,7 +7,7 @@ import { createDeepSeekModel, loadModel } from "../src/model.ts";
 import { mockModel } from "../src/mock-model.ts";
 import { createHttpServer } from "../src/server.ts";
 import { runLoop } from "../src/loop.ts";
-import { tools } from "../src/tools.ts";
+import { tools } from "../src/tools/index.ts";
 import type { Model } from "../src/types.ts";
 
 async function listen(server: Server) {
@@ -216,7 +216,11 @@ test("DeepSeek wire protocol: bearer auth, non-thinking, tools and tool-result c
     assert.equal(requests[0].model, "deepseek-flash");
     assert.equal(requests[0].stream, false);
     assert.deepEqual(requests[0].thinking, { type: "disabled" });
-    assert.equal(requests[0].tools[0].function.name, "get_current_time");
+    assert.ok(
+      requests[0].tools.some(
+        (tool: any) => tool.function.name === "get_current_time",
+      ),
+    );
     assert.equal(requests[1].messages.at(-1).tool_call_id, "ds-call");
     assert.equal(JSON.parse(requests[1].messages.at(-1).content).ok, true);
   } finally {

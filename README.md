@@ -148,7 +148,9 @@ src/compression.ts 压缩策略、回合切分、摘要与回退
 src/token-budget.ts 输入 token 估算与默认模型窗口
 src/loop.ts        模型/工具循环；不包含 HTTP 或 DeepSeek 协议
 src/model.ts       DeepSeek 请求与响应转换
-src/tools.ts       当前只有一个示例工具 get_current_time
+src/tools/index.ts 工具注册列表：时间、计算
+src/tools/calculate.ts 四则运算及参数校验
+src/tool-executor.ts   工具分发、JSON 参数解析、执行与结果回填
 src/mock-model.ts  显式离线演示，仅用于验证协议和流程
 src/types.ts       消息、模型、工具的共享契约
 ```
@@ -191,3 +193,22 @@ Mock 回复会明确带 `[Mock]`。问“现在几点”会实际执行时间工
 - 再次主动压缩：估算输入从 1096 降到 511，旧摘要与新增历史合并，编号和修正预算仍正确。
 
 以上结果来自真实 DeepSeek API；token 数字是本地估算，未作为服务端精确 usage 或无损压缩保证。摘要属于有损归纳，以上只证明本次样例通过。
+
+## 第三阶段：工具注册与调用
+
+循环只负责驱动模型；`tool-executor.ts` 负责调用已注册工具，`tools/` 放具体实现。注册定义包括名称、描述、JSON Schema 和 execute 函数。Schema 会传给模型，实际执行仍由各工具校验参数；尚未引入通用 JSON Schema 校验器。
+
+- `get_current_time`：返回当前 UTC 时间。
+- `calculate`：add / subtract / multiply / divide，参数为 operation、a、b；拒绝未知参数、非有限数字、除零及溢出。使用 JS 双精度浮点数，不用于精确货币结算，不执行任意表达式或代码。
+- `GET /tools`：查看实际注册工具的名称、描述、参数定义，不暴露 execute 函数。
+- 未知工具或非法参数回填为 `{ok:false,error}`，模型可在下一轮修正；取消信号继续传播。
+- 同一轮多个工具依次执行；后续模型调用可继续使用上一轮结果。新增工具仍需在注册列表显式登记。
+
+```bash
+curl http://127.0.0.1:4318/tools
+curl http://127.0.0.1:4318/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"请分两步调用calculate：先算137乘29，再把结果加41，最后回复数值"}'
+```
+
+本阶段只提供只读示例工具；写业务工具的权限、幂等和审计需单独实现，不以通用工具分发代替这些业务约束。

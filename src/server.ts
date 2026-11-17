@@ -3,7 +3,12 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { HttpError, type ChatHandler, type ChatInput } from "./types.ts";
+import {
+  HttpError,
+  type ChatHandler,
+  type ChatInput,
+  type Tool,
+} from "./types.ts";
 
 function json(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
@@ -50,11 +55,26 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   };
 }
 
-export function createHttpServer(chat: ChatHandler, modelMode: string) {
+export function createHttpServer(
+  chat: ChatHandler,
+  modelMode: string,
+  tools: Tool[] = [],
+) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     if (request.method === "GET" && path === "/health") {
       return json(response, 200, { status: "ok", modelMode });
+    }
+    if (request.method === "GET" && path === "/tools") {
+      return json(
+        response,
+        200,
+        tools.map(({ name, description, parameters }) => ({
+          name,
+          description,
+          parameters,
+        })),
+      );
     }
     if (request.method !== "POST" || path !== "/chat") {
       return json(response, 404, { error: "接口不存在" });

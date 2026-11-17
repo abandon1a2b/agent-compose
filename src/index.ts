@@ -1,13 +1,14 @@
 import { createChatHandler } from "./chat.ts";
 import { loadModel } from "./model.ts";
 import { createHttpServer } from "./server.ts";
-import { tools } from "./tools.ts";
+import { tools } from "./tools/index.ts";
 import { loadCompressionPolicy } from "./compression.ts";
 
 const { mode, model } = loadModel();
 const server = createHttpServer(
   createChatHandler(model, tools, loadCompressionPolicy()),
   mode,
+  tools,
 );
 const port = Number(process.env.PORT ?? 4318);
 server.listen(port, "127.0.0.1", () => {

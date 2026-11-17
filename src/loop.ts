@@ -1,3 +1,4 @@
+import { createToolExecutor } from "./tool-executor.ts";
 import { HttpError, type Message, type Model, type Tool } from "./types.ts";
 import { estimateInputTokens } from "./token-budget.ts";
 
@@ -11,6 +12,7 @@ export async function runLoop(
   limits: { maxInputTokens?: number; maxOutputTokens?: number } = {},
 ) {
   const messages = [...history];
+  const executeTool = createToolExecutor(tools);
   const trace: { name: string; ok: boolean }[] = [];
   for (let step = 1; step <= maxSteps; step++) {
     signal.throwIfAborted();
@@ -47,26 +49,7 @@ export async function runLoop(
     }
     for (const call of calls) {
       signal.throwIfAborted();
-      let output: { ok: boolean; value?: unknown; error?: string };
-      try {
-        const tool = tools.find((item) => item.name === call.name);
-        if (!tool) throw new Error(`未注册工具：${call.name}`);
-        let input: unknown;
-        try {
-          input = JSON.parse(call.arguments);
-        } catch {
-          throw new Error("工具参数必须是合法 JSON");
-        }
-        const value = await tool.execute(input, signal);
-        signal.throwIfAborted();
-        output = { ok: true, value };
-      } catch (error) {
-        signal.throwIfAborted();
-        output = {
-          ok: false,
-          error: error instanceof Error ? error.message : "工具执行失败",
-        };
-      }
+      const output = await executeTool(call, signal);
       trace.push({ name: call.name, ok: output.ok });
       messages.push({
         role: "tool",

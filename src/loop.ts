@@ -1,5 +1,11 @@
 import { createToolExecutor } from "./tool-executor.ts";
-import { HttpError, type Message, type Model, type Tool } from "./types.ts";
+import {
+  HttpError,
+  type Message,
+  type Model,
+  type Tool,
+  type ChatEvent,
+} from "./types.ts";
 import { estimateInputTokens } from "./token-budget.ts";
 
 /** One user turn: model -> tools -> model, until an answer or the step limit. */
@@ -9,7 +15,11 @@ export async function runLoop(
   history: Message[],
   signal: AbortSignal,
   maxSteps = 6,
-  limits: { maxInputTokens?: number; maxOutputTokens?: number } = {},
+  limits: {
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+    emit?: (event: ChatEvent) => void;
+  } = {},
 ) {
   const messages = [...history];
   const executeTool = createToolExecutor(tools);
@@ -24,8 +34,12 @@ export async function runLoop(
         "当前回合的输入或工具结果超过上下文预算；未拆分工具链，请缩小输入或工具结果",
       );
     }
+    limits.emit?.({ type: "step_start", step });
     const answer = await model.complete(messages, tools, signal, {
       maxOutputTokens: limits.maxOutputTokens,
+      onDelta: limits.emit
+        ? (text) => limits.emit!({ type: "text_delta", text })
+        : undefined,
     });
     signal.throwIfAborted();
     if (answer.role !== "assistant")
@@ -49,7 +63,9 @@ export async function runLoop(
     }
     for (const call of calls) {
       signal.throwIfAborted();
+      limits.emit?.({ type: "tool_start", name: call.name });
       const output = await executeTool(call, signal);
+      limits.emit?.({ type: "tool_end", name: call.name, ok: output.ok });
       trace.push({ name: call.name, ok: output.ok });
       messages.push({
         role: "tool",

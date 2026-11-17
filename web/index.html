@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light" />
     <title>Harness · 对话</title>
     <link rel="stylesheet" href="/app.css" />
-    <script src="/app.js" defer></script>
+    <script type="module" src="/app.js"></script>
   </head>
   <body>
     <aside id="sidebar">
@@ -38,8 +38,7 @@
           <h1>有什么可以帮你？</h1>
           <p>聊一个问题，或让工具帮你完成计算。</p>
           <div class="suggestions">
-            <button data-preset="publish_case">发布案例</button>
-            <button data-preset="publish_article">发布文章</button>
+            <span id="preset-entries"></span>
             <button data-prompt="请调用工具获取当前 UTC 时间。">
               ◷ 查询当前时间</button
             ><button

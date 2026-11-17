@@ -16,13 +16,14 @@ export type Model = {
     messages: Message[],
     tools: Tool[],
     signal: AbortSignal,
-    options?: { maxOutputTokens?: number },
+    options?: { maxOutputTokens?: number; onDelta?: (text: string) => void },
   ) => Promise<Message>;
 };
 export type ChatInput = {
   sessionId?: string;
   message: string;
   compress?: boolean;
+  stream?: boolean;
   preset?: import("./tasks/index.ts").Preset;
 };
 export type ChatOutput = {
@@ -33,9 +34,14 @@ export type ChatOutput = {
   toolCalls: { name: string; ok: boolean }[];
   compression: import("./compression.ts").CompressionInfo;
 };
+export type ChatEvent =
+  | { type: "step_start"; step: number }
+  | { type: "text_delta"; text: string }
+  | { type: "tool_start" | "tool_end"; name: string; ok?: boolean };
 export type ChatHandler = (
   input: ChatInput,
   signal: AbortSignal,
+  emit?: (event: ChatEvent) => void,
 ) => Promise<ChatOutput>;
 
 export class HttpError extends Error {

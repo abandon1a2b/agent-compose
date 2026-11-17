@@ -1,3 +1,4 @@
+import { presets, isPreset } from "./tasks/presets.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -38,7 +39,7 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (!value || typeof value !== "object")
     throw new HttpError(400, "请求必须是对象");
-  const { message, sessionId, compress, preset } = value as Record<
+  const { message, sessionId, compress, preset, stream } = value as Record<
     string,
     unknown
   >;
@@ -53,12 +54,12 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (compress !== undefined && typeof compress !== "boolean")
     throw new HttpError(400, "compress 必须是布尔值");
-  if (
-    preset !== undefined &&
-    !["publish_case", "publish_article"].includes(preset as string)
-  )
+  if (preset !== undefined && !isPreset(preset))
     throw new HttpError(400, "未知任务预设");
+  if (stream !== undefined && typeof stream !== "boolean")
+    throw new HttpError(400, "stream 必须是布尔值");
   return {
+    stream: stream as boolean | undefined,
     message: message.trim(),
     sessionId: sessionId as string | undefined,
     compress: compress as boolean | undefined,
@@ -77,6 +78,7 @@ export function createHttpServer(
     const assets: Record<string, [string, string]> = {
       "/": ["index.html", "text/html; charset=utf-8"],
       "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+      "/task-ui.js": ["task-ui.js", "text/javascript; charset=utf-8"],
       "/app.css": ["app.css", "text/css; charset=utf-8"],
     };
     if (request.method === "GET" && assets[path]) {
@@ -93,6 +95,8 @@ export function createHttpServer(
       }
       return;
     }
+    if (request.method === "GET" && path === "/presets")
+      return json(response, 200, presets);
     if (request.method === "GET" && path === "/health") {
       return json(response, 200, { status: "ok", modelMode });
     }
@@ -185,6 +189,40 @@ export function createHttpServer(
     ]);
     try {
       const input = await readInput(request);
+      if (input.stream) {
+        response.writeHead(200, {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "cache-control": "no-cache",
+          "x-accel-buffering": "no",
+        });
+        response.flushHeaders();
+        const emit = (event: unknown) => {
+          if (response.destroyed || response.writableLength > 1024 * 1024) {
+            disconnected.abort();
+            response.destroy();
+            signal.throwIfAborted();
+          }
+          response.write(JSON.stringify(event) + "\n");
+        };
+        try {
+          const result = await chat(input, signal, emit);
+          emit({ type: "done", result });
+        } catch (error) {
+          if (!response.destroyed)
+            emit({
+              type: "error",
+              status: error instanceof HttpError ? error.status : 500,
+              message: signal.aborted
+                ? "请求已中断"
+                : error instanceof HttpError
+                  ? error.message
+                  : "服务执行失败",
+            });
+        } finally {
+          response.end();
+        }
+        return;
+      }
       const output = await chat(input, signal);
       if (!response.destroyed) json(response, 200, output);
     } catch (error) {

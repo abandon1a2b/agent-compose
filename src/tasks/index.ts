@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { HttpError, type Tool } from "../types.ts";
-export type Preset = "publish_case" | "publish_article";
-export type Draft = {
-  title?: string;
-  content?: string;
-  city?: string;
-  area?: number;
-  style?: string;
-  images?: string[];
-};
+import {
+  getPreset,
+  missingFields as validate,
+  parsePatch,
+  fieldSchemas,
+  type Preset,
+  type Draft,
+} from "./presets.ts";
+export type { Preset, Draft } from "./presets.ts";
 export type Task = {
   id: string;
   sessionId: string;
@@ -52,73 +52,6 @@ export class MockPublisher implements Publisher {
       });
     return structuredClone(this.results.get(key)!);
   }
-}
-const labels: Record<string, string> = {
-  title: "标题",
-  content: "正文",
-  city: "城市名称",
-  area: "面积（㎡）",
-  images: "案例图片URL",
-};
-function validate(draft: Draft, preset: Preset) {
-  const required =
-    preset === "publish_case"
-      ? ["title", "content", "city", "area", "images"]
-      : ["title", "content"];
-  return required
-    .filter((k) => {
-      const v = draft[k as keyof Draft];
-      return (
-        v === undefined || v === "" || (Array.isArray(v) && v.length === 0)
-      );
-    })
-    .map((k) => labels[k]);
-}
-function parsePatch(value: unknown, preset: Preset): Draft {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new HttpError(400, "patch 必须是对象");
-  const allowed =
-    preset === "publish_case"
-      ? ["title", "content", "city", "area", "style", "images"]
-      : ["title", "content"];
-  const result: Record<string, unknown> = {};
-  for (const [key, val] of Object.entries(value)) {
-    if (!allowed.includes(key)) throw new HttpError(400, `不支持字段 ${key}`);
-    if (key === "area" && val === null) {
-      result[key] = undefined;
-      continue;
-    }
-    if (key === "area") {
-      if (
-        typeof val !== "number" ||
-        !Number.isFinite(val) ||
-        val <= 0 ||
-        val > 10000
-      )
-        throw new HttpError(400, "面积必须是 0–10000 的有效数字");
-    } else if (key === "images") {
-      if (
-        !Array.isArray(val) ||
-        val.length > 12 ||
-        val.some((x) => typeof x !== "string" || x.length > 2048)
-      )
-        throw new HttpError(400, "图片需为最多12个URL");
-      for (const x of val) {
-        try {
-          if (!["https:", "http:"].includes(new URL(x).protocol))
-            throw new Error();
-        } catch {
-          throw new HttpError(400, "图片必须是 http/https URL");
-        }
-      }
-    } else if (
-      typeof val !== "string" ||
-      val.length > (key === "content" ? 12000 : 200)
-    )
-      throw new HttpError(400, `${key} 格式或长度错误`);
-    result[key] = typeof val === "string" ? val.trim() : val;
-  }
-  return result;
 }
 export class TaskManager {
   private tasks = new Map<string, Task>();
@@ -228,20 +161,19 @@ export class TaskManager {
     this.tasks.set(id, t);
     return structuredClone(t);
   }
+  instructions(task: Task) {
+    return `你正在协助${getPreset(task.preset).title}。当前是Mock临时契约。仅收集本预设所需字段：${getPreset(
+      task.preset,
+    )
+      .fields.map((f) => f.label)
+      .join(
+        "、",
+      )}。优先调用update_draft记录用户提供的信息；根据missing补问，每次最多两项。不得编造事实、URL或数值。参数完整后提示用户查看页面草稿并点击确认，聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
+  }
   tools(sessionId: string): Tool[] {
     const t = this.forSession(sessionId);
     if (!t) return [];
-    const properties: Record<string, unknown> = {
-      title: { type: "string" },
-      content: { type: "string" },
-    };
-    if (t.preset === "publish_case")
-      Object.assign(properties, {
-        city: { type: "string" },
-        area: { anyOf: [{ type: "number" }, { type: "null" }] },
-        style: { type: "string" },
-        images: { type: "array", items: { type: "string" } },
-      });
+    const properties = fieldSchemas(t.preset);
     return [
       {
         name: "get_task",

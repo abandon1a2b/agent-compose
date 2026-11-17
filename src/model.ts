@@ -1,3 +1,4 @@
+import { readSSE } from "./sse.ts";
 import { HttpError, type Model, type ToolCall } from "./types.ts";
 import { mockModel } from "./mock-model.ts";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "./token-budget.ts";
@@ -26,7 +27,7 @@ export function createDeepSeekModel(options: Options): Model {
             },
             body: JSON.stringify({
               model,
-              stream: false,
+              stream: !!callOptions?.onDelta,
               thinking: { type: "disabled" },
               max_tokens:
                 callOptions?.maxOutputTokens ??
@@ -72,6 +73,75 @@ export function createDeepSeekModel(options: Options): Model {
       }
       if (!response.ok)
         throw new HttpError(502, `DeepSeek API 返回 HTTP ${response.status}`);
+      if (callOptions?.onDelta) {
+        if (!response.body) throw new HttpError(502, "DeepSeek 流为空");
+        let content = "",
+          finished = false,
+          done = false;
+        const calls = new Map<
+          number,
+          { id: string; name: string; arguments: string }
+        >();
+        for await (const frame of readSSE(response.body)) {
+          signal.throwIfAborted();
+          if (frame === "[DONE]") {
+            done = true;
+            break;
+          }
+          let part: any;
+          try {
+            part = JSON.parse(frame);
+          } catch {
+            throw new HttpError(502, "DeepSeek 流格式错误");
+          }
+          if (part.error) throw new HttpError(502, "DeepSeek 流返回错误");
+          const choice = part.choices?.[0];
+          if (!choice) continue;
+          if (choice.finish_reason === "length")
+            throw new HttpError(502, "DeepSeek 输出达到长度上限");
+          if (choice.finish_reason) {
+            if (!["stop", "tool_calls"].includes(choice.finish_reason))
+              throw new HttpError(502, "DeepSeek 未正常完成");
+            finished = true;
+          }
+          const delta = choice.delta ?? {};
+          if (typeof delta.content === "string") {
+            content += delta.content;
+            callOptions.onDelta(delta.content);
+          }
+          for (const item of delta.tool_calls ?? []) {
+            if (
+              !Number.isInteger(item.index) ||
+              item.index < 0 ||
+              item.index > 3
+            )
+              throw new HttpError(502, "工具流索引错误");
+            const call = calls.get(item.index) ?? {
+              id: "",
+              name: "",
+              arguments: "",
+            };
+            if (item.id) call.id = item.id;
+            if (item.function?.name) call.name += item.function.name;
+            if (item.function?.arguments)
+              call.arguments += item.function.arguments;
+            calls.set(item.index, call);
+          }
+        }
+        if (
+          !done ||
+          !finished ||
+          [...calls.values()].some((c) => !c.id || !c.name)
+        )
+          throw new HttpError(502, "DeepSeek 流提前中断，未提交本轮对话");
+        return {
+          role: "assistant",
+          content,
+          toolCalls: [...calls.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([, call]) => call),
+        };
+      }
       let data: {
         choices?: {
           message?: Record<string, unknown>;

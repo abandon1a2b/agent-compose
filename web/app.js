@@ -1,19 +1,11 @@
-const taskNames = { publish_case: "发布案例", publish_article: "发布文章" };
-const taskStatus = {
-  collecting: "收集信息",
-  awaiting_confirmation: "待确认",
-  approved: "已授权",
-  executing: "执行中",
-  succeeded: "模拟发布成功",
-  failed: "执行失败",
-  cancelled: "已取消",
-};
+import { createTaskUI } from "/task-ui.js";
 const $ = (id) => document.getElementById(id);
 const storageKey = "agent-harness-chats-v1";
 let chats = [],
   selected,
   pending = null,
   registeredTools = [];
+let streamText = "";
 try {
   chats = JSON.parse(sessionStorage.getItem(storageKey) || "[]");
   if (!Array.isArray(chats)) chats = [];
@@ -38,7 +30,7 @@ function error(text = "") {
   $("error").hidden = !text;
 }
 function render() {
-  renderTask();
+  taskUI.render();
   const chat = current();
   document.body.classList.toggle("empty", !chat?.messages.length);
   $("welcome").hidden = !!chat?.messages.length;
@@ -97,7 +89,11 @@ function render() {
       el("i", undefined, "spinner"),
       el("span", "正在调用模型与工具，请稍候…"),
     );
-    $("messages").append(waiting);
+    waiting.id = "stream-status";
+    const partial = el("div", streamText, "message-text");
+    partial.id = "stream-text";
+    partial.style.whiteSpace = "pre-wrap";
+    $("messages").append(waiting, partial);
   }
   $("send").hidden = !!pending;
   $("stop").hidden = !pending;
@@ -153,6 +149,7 @@ async function send(text, preset) {
   $("input").value = "";
   error();
   pending = new AbortController();
+  streamText = "";
   save();
   render();
   $("conversation").scrollTop = $("conversation").scrollHeight;
@@ -163,17 +160,61 @@ async function send(text, preset) {
       body: JSON.stringify({
         sessionId: chat.sessionId,
         message: text,
+        stream: true,
         compress: force,
         preset: chat.preset,
       }),
       signal: pending.signal,
     });
-    const result = await response.json();
     if (!response.ok) {
-      const e = new Error(result.error ?? "请求失败");
+      const body = await response.json();
+      const e = new Error(body.error ?? "请求失败");
       e.status = response.status;
       throw e;
     }
+    const reader = response.body.getReader(),
+      decoder = new TextDecoder();
+    let buffer = "",
+      result;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += done
+          ? decoder.decode()
+          : decoder.decode(value, { stream: true });
+        let index;
+        while ((index = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+          if (event.type === "step_start") {
+            streamText = "";
+            if ($("stream-status"))
+              $("stream-status").textContent = `模型第 ${event.step} 轮生成中…`;
+            if ($("stream-text")) $("stream-text").textContent = "";
+          }
+          if (event.type === "text_delta") {
+            streamText += event.text;
+            if ($("stream-text")) $("stream-text").textContent = streamText;
+          }
+          if (event.type === "tool_start" && $("stream-status"))
+            $("stream-status").textContent = `正在执行工具：${event.name}`;
+          if (event.type === "error") {
+            const e = new Error(event.message);
+            e.status = event.status;
+            throw e;
+          }
+          if (event.type === "done") result = event.result;
+          $("conversation").scrollTop = $("conversation").scrollHeight;
+        }
+        if (done) break;
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    if (!result) throw new Error("响应流中断，本轮未确认完成");
     chat.sessionId = result.sessionId;
     if (result.task) chat.task = result.task;
     chat.messages.push({ role: "assistant", text: result.reply, result });
@@ -186,7 +227,10 @@ async function send(text, preset) {
         : e.status === 404
           ? "服务端会话已失效（可能已重启）。请点击「新对话」重新开始。"
           : e.message;
-    chat.messages.push({ role: "failed", text: message });
+    chat.messages.push({
+      role: "failed",
+      text: message + (streamText ? "\n未完成的输出：" + streamText : ""),
+    });
     error(message);
     $("input").value = text;
   } finally {
@@ -255,6 +299,18 @@ $("open-tools").onclick = async () => {
     $("tools-list").replaceChildren(el("p", e.message));
   }
 };
+const taskUI = createTaskUI({
+  el,
+  current,
+  save,
+  render,
+  error,
+  isBusy: () => !!pending,
+  startPreset: (text, preset) => {
+    selected = undefined;
+    void send(text, preset);
+  },
+});
 render();
 fetch("/health")
   .then(async (response) => {
@@ -269,213 +325,3 @@ fetch("/health")
     $("connection").textContent = "连接失败";
     error("无法连接本地服务，请检查 npm start 是否正在运行。");
   });
-
-function renderTask() {
-  const panel = $("task-panel");
-  panel.replaceChildren();
-  const task = current()?.task;
-  if (!task) return;
-  const card = el("div", undefined, "task-card");
-  card.append(
-    el(
-      "strong",
-      `${taskNames[task.preset]} · ${taskStatus[task.status]} · V${task.version}`,
-    ),
-  );
-  card.append(
-    el(
-      "small",
-      task.missing.length
-        ? `待补充：${task.missing.join("、")}`
-        : `${task.subject.name} · 临时接口契约`,
-    ),
-  );
-  const button = el(
-    "button",
-    task.status === "succeeded" ? "查看模拟发布结果" : "查看 / 修改草稿",
-  );
-  button.disabled = !!pending;
-  button.onclick = () => void openDraft();
-  card.append(button);
-  panel.append(card);
-}
-async function taskRequest(action, body = {}) {
-  const chat = current(),
-    task = chat.task;
-  const response = await fetch(
-    `/tasks/${task.id}${action ? "/" + action : "?sessionId=" + encodeURIComponent(chat.sessionId)}`,
-    action
-      ? {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: chat.sessionId, ...body }),
-        }
-      : {},
-  );
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error);
-  chat.task = data;
-  save();
-  render();
-  return data;
-}
-async function openDraft() {
-  try {
-    const task = await taskRequest("");
-    const body = $("draft-body");
-    body.replaceChildren();
-    body.append(
-      el(
-        "p",
-        `${taskNames[task.preset]} · V${task.version} · 发布主体：${task.subject.name}`,
-        "muted",
-      ),
-    );
-    body.append(
-      el(
-        "p",
-        "当前为模拟接口。请核对所有内容；点击确认后仅生成 Mock 发布结果，不会对外发布。",
-        "notice",
-      ),
-    );
-    const form = el("form");
-    form.className = "draft-form";
-    const fields =
-      task.preset === "publish_case"
-        ? [
-            ["title", "标题"],
-            ["content", "正文"],
-            ["city", "城市名称"],
-            ["area", "面积（㎡）"],
-            ["style", "风格（选填）"],
-            ["images", "图片 URL（每行一个，不会上传或抓取）"],
-          ]
-        : [
-            ["title", "标题"],
-            ["content", "正文"],
-          ];
-    const inputs = {};
-    const immutable = [
-      "succeeded",
-      "cancelled",
-      "approved",
-      "executing",
-    ].includes(task.status);
-    for (const [key, label] of fields) {
-      const wrapper = el("label", label);
-      const input = el(
-        key === "content" || key === "images" ? "textarea" : "input",
-      );
-      input.name = key;
-      input.value = Array.isArray(task.draft[key])
-        ? task.draft[key].join("\n")
-        : (task.draft[key] ?? "");
-      input.disabled = immutable;
-      if (key === "area") {
-        input.type = "number";
-        input.min = "0.01";
-        input.step = "any";
-      }
-      if (key === "content") input.rows = 7;
-      wrapper.append(input);
-      form.append(wrapper);
-      inputs[key] = input;
-    }
-    const actions = el("div", undefined, "draft-actions");
-    const saveButton = el("button", "保存修改");
-    saveButton.type = "submit";
-    saveButton.disabled = immutable || !!pending;
-    const confirm = el(
-      "button",
-      task.status === "failed" ? "确认重试模拟发布" : "确认模拟发布",
-      "confirm-publish",
-    );
-    confirm.type = "button";
-    confirm.disabled =
-      !["awaiting_confirmation", "failed"].includes(task.status) || !!pending;
-    const cancel = el("button", "取消任务");
-    cancel.type = "button";
-    cancel.disabled = immutable || !!pending;
-    const feedback = el(
-      "p",
-      task.missing.length
-        ? `缺少：${task.missing.join("、")}`
-        : task.status === "succeeded"
-          ? "该版本已完成模拟发布。"
-          : task.status === "cancelled"
-            ? "任务已取消。"
-            : "请核对当前版本后确认。",
-      "muted",
-    );
-    form.oninput = () => {
-      confirm.disabled = true;
-      feedback.textContent = "内容已修改，请先保存，再核对新版本。";
-    };
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      saveButton.disabled = true;
-      try {
-        const patch = {};
-        for (const [key] of fields) {
-          const value = inputs[key].value.trim();
-          if (key === "area") {
-            patch[key] = value ? Number(value) : null;
-          } else
-            patch[key] =
-              key === "images"
-                ? value
-                    .split("\n")
-                    .map((x) => x.trim())
-                    .filter(Boolean)
-                : value;
-        }
-        await taskRequest("draft", { version: task.version, patch });
-        await openDraft();
-      } catch (e) {
-        feedback.textContent = e.message;
-        saveButton.disabled = false;
-      }
-    };
-    confirm.onclick = async () => {
-      confirm.disabled = true;
-      saveButton.disabled = true;
-      cancel.disabled = true;
-      try {
-        await taskRequest("confirm", { version: task.version });
-        await openDraft();
-      } catch (e) {
-        feedback.textContent = e.message;
-        saveButton.disabled = immutable;
-      }
-    };
-    cancel.onclick = async () => {
-      try {
-        await taskRequest("cancel");
-        await openDraft();
-      } catch (e) {
-        feedback.textContent = e.message;
-      }
-    };
-    actions.append(saveButton, confirm, cancel);
-    form.append(feedback, actions);
-    body.append(form);
-    if (task.result)
-      body.append(
-        el("pre", JSON.stringify(task.result, null, 2), "publish-result"),
-      );
-    if (task.error) body.append(el("p", task.error));
-    if (!$("draft-dialog").open) $("draft-dialog").showModal();
-  } catch (e) {
-    error(e.message);
-  }
-}
-$("close-draft").onclick = () => $("draft-dialog").close();
-for (const button of document.querySelectorAll("[data-preset]"))
-  button.onclick = () => {
-    if (pending) return;
-    selected = undefined;
-    void send(
-      `我要${taskNames[button.dataset.preset]}，请引导我提供需要的内容。`,
-      button.dataset.preset,
-    );
-  };

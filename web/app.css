@@ -620,3 +620,4 @@ dialog p {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+#preset-entries{display:contents}

@@ -1,3 +1,4 @@
+import { mockExecutor } from "./fixtures/executor.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -17,7 +18,7 @@ const fields = parseFields([
   { id: "area", type: "number", label: "面积", required: true, min: 0.01 },
 ]);
 function fixture() {
-  const tasks = new TaskManager(undefined, presets),
+  const tasks = new TaskManager(mockExecutor(), presets),
     ui = new Interactions(),
     cards: Card[] = [];
   tasks.ensure("s", "publish_case");

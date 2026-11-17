@@ -1,11 +1,8 @@
+import { mockExecutor } from "./fixtures/executor.ts";
 import { presets } from "../integrations/content-service/presets.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  TaskManager,
-  MockPublisher,
-  type Publisher,
-} from "../src/tasks/index.ts";
+import { TaskManager, type TaskExecutor } from "../src/tasks/index.ts";
 import { createToolExecutor } from "../src/tool-executor.ts";
 import { createChatHandler } from "../src/chat.ts";
 import { mockModel } from "../src/mock-model.ts";
@@ -19,7 +16,7 @@ const draft = {
   images: ["https://example.com/mock.jpg"],
 };
 test("case requires fields, cannot publish without confirmation, and stale version is rejected", async () => {
-  const m = new TaskManager(undefined, presets);
+  const m = new TaskManager(mockExecutor(), presets);
   let t = m.ensure("s", "publish_case")!;
   await assert.rejects(m.confirm(t.id, "s", 0), /未准备/);
   const executor = createToolExecutor(m.tools("s"));
@@ -44,7 +41,7 @@ test("case requires fields, cannot publish without confirmation, and stale versi
   assert.throws(() => m.update(t.id, "s", 2, { title: "再修改" }), /不能修改/);
 });
 test("article shares workflow but has distinct fields and session ownership", async () => {
-  const m = new TaskManager(undefined, presets);
+  const m = new TaskManager(mockExecutor(), presets);
   const t = m.ensure("a", "publish_article")!;
   assert.throws(() => m.get(t.id, "b"), /不存在/);
   assert.throws(() => m.update(t.id, "a", 0, { area: 90 }), /不支持/);
@@ -55,7 +52,7 @@ test("article shares workflow but has distinct fields and session ownership", as
   assert.throws(() => m.ensure("a", "publish_case"), /新建对话/);
 });
 test("invalid fields cannot satisfy validation and cancellation blocks confirmation", async () => {
-  const m = new TaskManager(undefined, presets);
+  const m = new TaskManager(mockExecutor(), presets);
   const t = m.ensure("s", "publish_case")!;
   assert.throws(() => m.update(t.id, "s", 0, { area: -1 }), /面积/);
   assert.throws(
@@ -71,8 +68,8 @@ test("concurrent confirmations execute once and bind the unchanged snapshot", as
   let release!: () => void,
     count = 0;
   let published: any;
-  const publisher: Publisher = {
-    async publish(_p, d, s, key) {
+  const publisher: TaskExecutor = {
+    async execute(_p, d, s, key) {
       count++;
       published = { d, s, key };
       await new Promise<void>((r) => (release = r));
@@ -99,7 +96,7 @@ test("failed publication retries the same idempotency key", async () => {
   const keys: string[] = [];
   const m = new TaskManager(
     {
-      async publish(_p, _d, _s, key) {
+      async execute(_p, _d, _s, key) {
         keys.push(key);
         if (keys.length === 1) throw new Error("test");
         return { mock: true, publicationId: "mock-id", message: "ok" };
@@ -114,7 +111,7 @@ test("failed publication retries the same idempotency key", async () => {
   assert.equal(keys[0], keys[1]);
 });
 test("HTTP task endpoints enforce version, session capability and duplicate confirmation", async () => {
-  const manager = new TaskManager(undefined, presets);
+  const manager = new TaskManager(mockExecutor(), presets);
   const server = createHttpServer(
     createChatHandler(mockModel, [], {}, manager),
     "mock",

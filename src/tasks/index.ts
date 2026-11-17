@@ -1,3 +1,13 @@
+import type {
+  TaskExecutor,
+  ExecutionResult,
+  ExecutionTarget,
+} from "./executor.ts";
+export type {
+  TaskExecutor,
+  ExecutionResult,
+  ExecutionTarget,
+} from "./executor.ts";
 import { randomUUID } from "node:crypto";
 import { HttpError, type Tool } from "../types.ts";
 import {
@@ -24,47 +34,18 @@ export type Task = {
     | "succeeded"
     | "failed"
     | "cancelled"
-    | "paused";
-  mode: "mock" | "local";
-  result?: {
-    mock: boolean;
-    publicationId: string;
-    message: string;
-    url?: string;
-  };
+    | "paused"
+    | "ready";
+  execution: ExecutionTarget;
+  requiresConfirmation: boolean;
+  result?: ExecutionResult;
   error?: string;
 };
-export interface Publisher {
-  mode?: "mock" | "local";
-  publish(
-    preset: Preset,
-    draft: Draft,
-    subject: Task["subject"],
-    idempotencyKey: string,
-  ): Promise<NonNullable<Task["result"]>>;
-}
-export class MockPublisher implements Publisher {
-  private results = new Map<string, NonNullable<Task["result"]>>();
-  async publish(
-    preset: Preset,
-    _draft: Draft,
-    _subject: Task["subject"],
-    key: string,
-  ) {
-    if (!this.results.has(key))
-      this.results.set(key, {
-        mock: true,
-        publicationId: `mock-${preset}-${randomUUID()}`,
-        message: "模拟发布成功，未写入任何真实业务系统",
-      });
-    return structuredClone(this.results.get(key)!);
-  }
-}
 export class TaskManager {
   private tasks = new Map<string, Task>();
   private bySession = new Map<string, string>();
   private inFlight = new Map<string, Promise<Task>>();
-  private publisher: Publisher;
+  private executor: TaskExecutor;
   private registry: ReturnType<typeof createPresetRegistry>;
   private policy: {
     switching: boolean;
@@ -75,7 +56,11 @@ export class TaskManager {
     return this.registry.definitions;
   }
   constructor(
-    publisher: Publisher = new MockPublisher(),
+    executor: TaskExecutor = {
+      execute: async () => {
+        throw new Error("未注册任务执行器");
+      },
+    },
     definitions: readonly TaskDefinition[] = [],
     policy: {
       switching: boolean;
@@ -85,7 +70,13 @@ export class TaskManager {
   ) {
     this.registry = createPresetRegistry(structuredClone(definitions));
     this.policy = policy;
-    this.publisher = publisher;
+    this.executor = executor;
+    for (const d of definitions)
+      if (
+        d.confirmationRequired === false &&
+        this.executor.requiresConfirmation?.(d.id) !== false
+      )
+        throw new Error("配置不能降低执行器确认要求");
   }
   ensure(sessionId: string, preset?: Preset): Task | undefined {
     const existing = this.forSession(sessionId);
@@ -99,7 +90,12 @@ export class TaskManager {
     if (!preset) return undefined;
     this.registry.getPreset(preset);
     const t: Task = {
-      mode: this.publisher.mode ?? "mock",
+      execution: structuredClone(
+        this.executor.target ?? { label: "已注册执行器" },
+      ),
+      requiresConfirmation:
+        this.registry.getPreset(preset).confirmationRequired !== false ||
+        this.executor.requiresConfirmation?.(preset) !== false,
       id: randomUUID(),
       sessionId,
       preset,
@@ -113,6 +109,8 @@ export class TaskManager {
       status: "collecting",
     };
     t.missing = this.registry.missingFields(t.draft, preset);
+    if (!t.missing.length)
+      t.status = t.requiresConfirmation ? "awaiting_confirmation" : "ready";
     this.tasks.set(t.id, t);
     this.bySession.set(sessionId, t.id);
     return structuredClone(t);
@@ -142,13 +140,17 @@ export class TaskManager {
       throw new HttpError(409, "只能恢复已暂停任务");
     this.pauseCurrent(sessionId);
     task.version++;
-    task.status = task.missing.length ? "collecting" : "awaiting_confirmation";
+    task.status = task.missing.length
+      ? "collecting"
+      : task.requiresConfirmation
+        ? "awaiting_confirmation"
+        : "ready";
     this.tasks.set(task.id, task);
     this.bySession.set(sessionId, task.id);
     return structuredClone(task);
   }
   routingTools(sessionId: string): Tool[] {
-    if (!this.policy.switching) return [];
+    if (!this.policy.switching || !this.definitions.length) return [];
     return [
       {
         name: "start_task",
@@ -202,12 +204,20 @@ export class TaskManager {
     const t = this.get(id, sessionId);
     if (t.version !== version)
       throw new HttpError(409, "草稿版本已变更，请刷新预览");
-    if (!["collecting", "awaiting_confirmation", "failed"].includes(t.status))
+    if (
+      !["collecting", "awaiting_confirmation", "ready", "failed"].includes(
+        t.status,
+      )
+    )
       throw new HttpError(409, "当前任务不能修改");
     t.draft = { ...t.draft, ...this.registry.parsePatch(patch, t.preset) };
     t.version++;
     t.missing = this.registry.missingFields(t.draft, t.preset);
-    t.status = t.missing.length ? "collecting" : "awaiting_confirmation";
+    t.status = t.missing.length
+      ? "collecting"
+      : t.requiresConfirmation
+        ? "awaiting_confirmation"
+        : "ready";
     delete t.error;
     delete t.result;
     this.tasks.set(id, t);
@@ -216,7 +226,7 @@ export class TaskManager {
   cancel(id: string, sessionId: string) {
     const t = this.get(id, sessionId);
     if (["approved", "executing", "succeeded"].includes(t.status))
-      throw new HttpError(409, "执行中或已发布的任务不能取消");
+      throw new HttpError(409, "执行中或已完成的任务不能取消");
     t.status = "cancelled";
     this.tasks.set(id, t);
     return t;
@@ -233,7 +243,7 @@ export class TaskManager {
       throw new HttpError(409, "必填信息不完整");
     t.status = "approved";
     this.tasks.set(id, t);
-    const promise = this.executeApproved(id, sessionId);
+    const promise = this.executeTask(id, sessionId);
     this.inFlight.set(id, promise);
     try {
       return await promise;
@@ -241,18 +251,23 @@ export class TaskManager {
       this.inFlight.delete(id);
     }
   }
-  async executeApproved(id: string, sessionId: string) {
+  async executeTask(id: string, sessionId: string) {
     const t = this.get(id, sessionId);
     if (t.status === "succeeded") return t;
-    if (t.status !== "approved")
+    if (
+      t.status !== "approved" &&
+      !(["ready", "failed"].includes(t.status) && !t.requiresConfirmation)
+    )
       throw new HttpError(
         409,
         "需要用户在页面确认当前版本，模型不能代替用户授权",
       );
+    if (this.registry.missingFields(t.draft, t.preset).length)
+      throw new HttpError(409, "输入不完整");
     t.status = "executing";
     this.tasks.set(id, t);
     try {
-      t.result = await this.publisher.publish(
+      t.result = await this.executor.execute(
         t.preset,
         structuredClone(t.draft),
         structuredClone(t.subject),
@@ -270,12 +285,12 @@ export class TaskManager {
     return structuredClone(t);
   }
   instructions(task: Task) {
-    return `你正在协助${this.registry.getPreset(task.preset).title}。当前为${task.mode === "local" ? "本地验证服务，会真实保存到本地，不是线上发布" : "Mock模拟执行"}。${this.registry.getPreset(task.preset).instructions ?? ""}仅收集本预设所需字段：${this.registry
+    return `你正在协助${this.registry.getPreset(task.preset).title}。执行目标：${task.execution.label}。${this.registry.getPreset(task.preset).instructions ?? ""}仅收集本预设所需字段：${this.registry
       .getPreset(task.preset)
       .fields.map((f) => f.label)
       .join(
         "、",
-      )}。优先调用update_draft记录用户提供的信息；根据missing补问，每次最多两项。不得编造事实、URL或数值。参数完整后调用 render_interaction 生成 confirmation 卡片；用户需要修改时通过对话更新草稿，再生成新卡片。聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
+      )}。优先调用update_draft记录用户提供的信息；根据missing补问，每次最多两项。不得编造事实、URL或数值。参数完整后，若任务requiresConfirmation为true则生成confirmation卡片，否则调用任务执行工具；用户需要修改时通过对话更新草稿，再生成新卡片。聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
   }
   tools(sessionId: string): Tool[] {
     const t = this.forSession(sessionId);
@@ -315,13 +330,13 @@ export class TaskManager {
       {
         name: t.preset,
         description:
-          "发布当前已确认草稿；未通过页面确认时服务端拒绝。执行模式由服务端配置决定。",
+          "执行当前任务；需要确认的执行器必须先取得用户对当前版本的授权。",
         parameters: {
           type: "object",
           properties: {},
           additionalProperties: false,
         },
-        execute: () => this.executeApproved(t.id, sessionId),
+        execute: () => this.executeTask(t.id, sessionId),
       },
     ];
   }

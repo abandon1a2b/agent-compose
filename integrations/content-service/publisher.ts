@@ -1,10 +1,11 @@
 import { getImage } from "../../src/images.ts";
 import { HttpError } from "../../src/types.ts";
-import type { Publisher, Task } from "../../src/tasks/index.ts";
+import type { Task } from "../../src/tasks/index.ts";
+import type { ContentPublisher } from "./contracts.ts";
 import type { Preset, Draft } from "../../src/tasks/presets.ts";
 
 /** Local validation adapter. The core never imports the demo service or its storage. */
-export class ContentServicePublisher implements Publisher {
+export class ContentServicePublisher implements ContentPublisher {
   readonly mode = "local" as const;
   private base: string;
   constructor(base: string) {

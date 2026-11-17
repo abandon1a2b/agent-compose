@@ -410,3 +410,17 @@ npm start
 所有任务仍必须经过独立确认。配置 `confirmationRequired: false` 会启动失败，不能绕过版本绑定、字段校验与授权。执行器的具体网络调用、图片转存及错误处理留在适配器。
 
 本轮仅执行本地类型检查和自动化回归，没有启动额外后台服务或进行浏览器/外部模型测试。
+
+## 核心业务解耦收敛
+
+核心任务现在依赖 `src/tasks/executor.ts` 的 `TaskExecutor.execute`，返回通用 `ExecutionResult`。核心不定义 publicationId、内容服务地址或案例/文章分类，也不内置Mock发布实现。
+
+- 内容发布协议、资源编号及Mock实现：`integrations/content-service/contracts.ts`、`publisher.ts`、`mock-publisher.ts`。
+- 应用组装：`examples/local-app.ts` 把业务发布方法绑定为通用execute函数。
+- 执行目标仅是可注入的通用描述 `ExecutionTarget`，不在核心枚举 local/mock 业务模式。
+- 执行器在代码中声明 requiresConfirmation；定义不能把需要确认的执行器降级。只读执行器可显式声明不需确认，输入完整后进入ready并执行。
+- 允许无预设的纯聊天配置、无输入字段的任务和无confirmation的只读应用。无需为了通过配置校验虚构发布任务。
+
+模型供应商、内存附件与HTTP适配仍属于当前src中的基础设施实现，本次收敛针对业务依赖，不代表基础设施适配也已全部拆成独立包。
+
+本次只进行类型检查和本地自动化测试，没有启动、停止或占用用户服务端口。ChatKit实验目录未接入启动链，保留未提交状态，未扩大其接入范围。

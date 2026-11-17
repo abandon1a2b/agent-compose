@@ -1,3 +1,4 @@
+import { mockExecutor } from "./fixtures/executor.ts";
 import { presets } from "../integrations/content-service/presets.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -44,7 +45,7 @@ test("model sees attached image instead of only a filename", async () => {
 });
 test("model-generated interaction rejects code and arbitrary action properties", async () => {
   const ui = new Interactions(),
-    tasks = new TaskManager(undefined, presets),
+    tasks = new TaskManager(mockExecutor(), presets),
     cards: any[] = [];
   const tool = ui.tools("s", tasks, (c) => cards.push(c))[0];
   assert.throws(
@@ -71,7 +72,7 @@ test("model-generated interaction rejects code and arbitrary action properties",
   assert.equal(cards[0].kind, "question");
 });
 test("confirmation card binds real snapshot, rejects stale revision and cannot cross sessions", async () => {
-  const tasks = new TaskManager(undefined, presets),
+  const tasks = new TaskManager(mockExecutor(), presets),
     ui = new Interactions(),
     cards: any[] = [];
   const task = tasks.ensure("s", "publish_article")!;

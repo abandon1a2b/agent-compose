@@ -1,3 +1,4 @@
+import { mockExecutor } from "./fixtures/executor.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -62,7 +63,7 @@ test("configuration is strict, immutable, versioned and cannot disable approval"
 });
 test("switch pauses previous drafts and invalidates both old forms and confirmations; resume preserves data", async () => {
   const config = validateConfig(runtime(), app(), executors);
-  const tasks = new TaskManager(undefined, config.application.presets, {
+  const tasks = new TaskManager(mockExecutor(), config.application.presets, {
     switching: true,
     configVersion: config.version,
   });
@@ -145,7 +146,7 @@ test("waiting interaction terminates without a decorative model call", async () 
 });
 test("natural task routing rebuilds context and keeps both model calls inside one budget", async () => {
   const config = validateConfig(runtime(), app(), executors);
-  const tasks = new TaskManager(undefined, config.application.presets, {
+  const tasks = new TaskManager(mockExecutor(), config.application.presets, {
     switching: true,
     configVersion: config.version,
   });

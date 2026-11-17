@@ -31,12 +31,13 @@ export function renderInteraction(
     ),
   );
   const snapshot = card.snapshot ?? {};
+  box.append(el("small", snapshot.execution?.label ?? "执行目标"));
   box.append(
     el(
       "p",
-      snapshot.mode === "local"
-        ? "将提交到本机内容服务并保存数据，不会发布到线上。"
-        : "当前为Mock模拟执行，不保存到业务服务。",
+      !snapshot.execution?.simulated
+        ? "将执行当前任务，请核对执行目标和参数。"
+        : "当前为模拟执行。",
       "muted",
     ),
   );
@@ -81,8 +82,8 @@ export function renderInteraction(
   const feedback = el(
     "p",
     card.status === "completed"
-      ? snapshot.mode === "local"
-        ? "已提交到本地验证服务。"
+      ? !snapshot.execution?.simulated
+        ? "执行已完成。"
         : "模拟执行已完成。"
       : "如需修改，请直接在对话中说明，旧确认卡片将失效。",
     "muted",
@@ -107,7 +108,7 @@ export function renderInteraction(
       if (data.result?.url) {
         const url = new URL(data.result.url);
         if (["http:", "https:"].includes(url.protocol)) {
-          const link = el("a", "查看已提交内容 ↗");
+          const link = el("a", "查看执行结果 ↗");
           link.href = url.href;
           link.target = "_blank";
           link.rel = "noreferrer";
@@ -126,7 +127,7 @@ export function renderInteraction(
     try {
       const url = new URL(card.result.url);
       if (["http:", "https:"].includes(url.protocol)) {
-        const link = el("a", "查看已提交内容 ↗");
+        const link = el("a", "查看执行结果 ↗");
         link.href = url.href;
         link.target = "_blank";
         link.rel = "noreferrer";

@@ -25,13 +25,13 @@ export type ApplicationConfig = {
   taskSwitching: { enabled: boolean; previousTask: "pause"; reuseDraft: "ask" };
   presets: (TaskDefinition & {
     executor: string;
-    confirmationRequired: true;
+    confirmationRequired: boolean;
     instructions: string;
   })[];
 };
 export type ExecutorBinding = {
   requiresConfirmation: boolean;
-  execute: import("../tasks/index.ts").Publisher["publish"];
+  execute: import("../tasks/executor.ts").TaskExecutor["execute"];
 };
 function keys(v: any, allowed: string[], where: string) {
   if (
@@ -85,7 +85,6 @@ export function validateConfig(
   if (
     typeof runtime.interaction.stopOnAwaitingUser !== "boolean" ||
     !Array.isArray(runtime.interaction.allowedKinds) ||
-    !runtime.interaction.allowedKinds.length ||
     runtime.interaction.allowedKinds.some(
       (k: any) => !["question", "form", "confirmation"].includes(k),
     )
@@ -94,10 +93,9 @@ export function validateConfig(
   integer(runtime.interaction.maxFormFields, 1, 6, "maxFormFields");
   if (
     new Set(runtime.interaction.allowedKinds).size !==
-      runtime.interaction.allowedKinds.length ||
-    !runtime.interaction.allowedKinds.includes("confirmation")
+    runtime.interaction.allowedKinds.length
   )
-    throw new Error("交互类型重复或缺少任务确认类型");
+    throw new Error("交互类型重复");
   keys(
     runtime.compression,
     [
@@ -157,8 +155,7 @@ export function validateConfig(
     app.taskSwitching.reuseDraft !== "ask"
   )
     throw new Error("当前仅支持保留旧任务、询问复用的切换策略");
-  if (!Array.isArray(app.presets) || !app.presets.length)
-    throw new Error("presets 不能为空");
+  if (!Array.isArray(app.presets)) throw new Error("presets 必须是数组");
   const ids = new Set();
   for (const p of app.presets) {
     keys(
@@ -198,9 +195,17 @@ export function validateConfig(
       typeof binding.requiresConfirmation !== "boolean"
     )
       throw new Error(`未注册执行器 ${p.executor}`);
-    if (p.confirmationRequired !== true)
-      throw new Error("当前任务执行器必须确认，配置不能取消授权约束");
-    if (!Array.isArray(p.fields) || !p.fields.length || p.fields.length > 30)
+    if (
+      typeof p.confirmationRequired !== "boolean" ||
+      (binding.requiresConfirmation && !p.confirmationRequired)
+    )
+      throw new Error("配置不能取消执行器要求的授权约束");
+    if (
+      p.confirmationRequired &&
+      !runtime.interaction.allowedKinds.includes("confirmation")
+    )
+      throw new Error("需确认的任务缺少confirmation交互");
+    if (!Array.isArray(p.fields) || p.fields.length > 30)
       throw new Error("字段列表错误");
     const names = new Set();
     for (const f of p.fields) {

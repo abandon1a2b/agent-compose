@@ -59,7 +59,9 @@ export class Interactions {
     this.policy = policy;
   }
   instructions() {
-    return interactionRules(this.policy);
+    return this.policy.allowedKinds.length
+      ? interactionRules(this.policy)
+      : "当前不提供交互组件，请用文字回复。";
   }
   private cards = new Map<string, { sessionId: string; card: Card }>();
   tools(
@@ -67,6 +69,7 @@ export class Interactions {
     tasks: TaskManager,
     onCard: (card: Card) => void,
   ): Tool[] {
+    if (!this.policy.allowedKinds.length) return [];
     return [
       {
         name: "render_interaction",
@@ -135,9 +138,12 @@ export class Interactions {
             const task = tasks.forSession(sessionId);
             if (task) {
               if (
-                !["collecting", "awaiting_confirmation", "failed"].includes(
-                  task.status,
-                )
+                ![
+                  "collecting",
+                  "awaiting_confirmation",
+                  "ready",
+                  "failed",
+                ].includes(task.status)
               )
                 throw new Error("当前任务不能再收集信息");
               card.taskId = task.id;
@@ -156,8 +162,7 @@ export class Interactions {
             card.snapshot = {
               subject: task.subject,
               draft: task.draft,
-              mock: task.mode === "mock",
-              mode: task.mode,
+              execution: task.execution,
             };
           }
           this.cards.set(card.id, { sessionId, card });
@@ -207,7 +212,9 @@ export class Interactions {
       const task = tasks.get(card.taskId, sessionId);
       if (
         task.version !== card.version ||
-        !["collecting", "awaiting_confirmation", "failed"].includes(task.status)
+        !["collecting", "awaiting_confirmation", "ready", "failed"].includes(
+          task.status,
+        )
       )
         throw new HttpError(
           409,

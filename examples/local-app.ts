@@ -1,8 +1,9 @@
+import { MockContentPublisher } from "../integrations/content-service/mock-publisher.ts";
 import { loadConfig } from "../src/config/index.ts";
 import { contentExecutors } from "../integrations/content-service/executors.ts";
 import { ContentServicePublisher } from "../integrations/content-service/publisher.ts";
 import { Interactions } from "../src/interactions.ts";
-import { TaskManager, MockPublisher } from "../src/tasks/index.ts";
+import { TaskManager } from "../src/tasks/index.ts";
 import { createChatHandler } from "../src/chat.ts";
 import { loadModel } from "../src/model.ts";
 import { createHttpServer } from "../src/server.ts";
@@ -10,7 +11,7 @@ import { tools } from "../src/tools/index.ts";
 
 const provider = process.env.CONTENT_SERVICE_URL
   ? new ContentServicePublisher(process.env.CONTENT_SERVICE_URL)
-  : new MockPublisher();
+  : new MockContentPublisher();
 const executors = contentExecutors(provider);
 const config = loadConfig(
   process.env.HARNESS_RUNTIME_CONFIG ??
@@ -27,8 +28,18 @@ const { mode, model } = loadModel({
 });
 const tasks = new TaskManager(
   {
-    mode: "mode" in provider ? provider.mode : "mock",
-    publish: (preset, draft, subject, key) => {
+    target: {
+      label:
+        provider.mode === "local"
+          ? "本地内容服务（非线上发布）"
+          : "模拟内容发布",
+      simulated: provider.mode !== "local",
+    },
+    requiresConfirmation: (preset) =>
+      executors[
+        config.application.presets.find((p) => p.id === preset)!.executor
+      ].requiresConfirmation,
+    execute: (preset, draft, subject, key) => {
       const definition = config.application.presets.find(
         (p) => p.id === preset,
       )!;

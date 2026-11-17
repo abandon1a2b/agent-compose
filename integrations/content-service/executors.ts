@@ -1,7 +1,7 @@
-import type { Publisher } from "../../src/tasks/index.ts";
+import type { ContentPublisher } from "./contracts.ts";
 import type { ExecutorBinding } from "../../src/config/index.ts";
 export function contentExecutors(
-  publisher: Publisher,
+  publisher: ContentPublisher,
 ): Record<string, ExecutorBinding> {
   return {
     "content.publishCase": {

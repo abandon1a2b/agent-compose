@@ -1,7 +1,15 @@
+import { renderForm } from "/form-ui.js";
 /** A small allowlisted renderer. It never runs model HTML, JS, URLs or arbitrary actions. */
-export function renderInteraction(card, { el, sessionId, send, save, isBusy }) {
+export function renderInteraction(
+  card,
+  { el, sessionId, send, save, isBusy, submitForm },
+) {
   const box = el("section", undefined, "interaction-card");
   box.append(el("strong", card.title));
+  if (card.kind === "form") {
+    box.append(renderForm(card, { el, submitForm, save, isBusy }));
+    return box;
+  }
   if (card.kind === "question") {
     const actions = el("div");
     for (const option of card.options ?? []) {

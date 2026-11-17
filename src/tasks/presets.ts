@@ -13,6 +13,9 @@ export type Preset = string;
 export type TaskDefinition = {
   id: string;
   title: string;
+  instructions?: string;
+  executor?: string;
+  confirmationRequired?: boolean;
   fields: readonly Field[];
 };
 export type Draft = Record<string, string | number | string[] | undefined>;

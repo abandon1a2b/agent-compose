@@ -356,3 +356,57 @@ npm start
 发布请求使用 `taskId:version:subjectId` 作为 Idempotency-Key。内容服务将幂等键与规范化请求内容绑定：相同键相同内容返回原结果，不同内容返回409。内容服务服务端再次校验字段，不依赖模型或Harness校验。服务不可用时任务进入failed，可按原版本和原键重试。
 
 这是本地验证系统：无认证、仅监听loopback；内容服务单进程JSON文件存储，不支持多实例并发写。Harness任务和会话仍在内存。后续接真实业务只替换 integration，内容服务及 examples 均不是核心资产。
+
+## 第九阶段：模型生成的回复表单
+
+交互协议增加 `form`，仍由模型调用 `render_interaction` 生成，不按业务类型硬编码页面。支持 text、textarea、number、select、multiselect，单卡1–6个字段；允许标签、占位提示、单位、必填、数值范围、文本长度和枚举选项。拒绝任意脚本、动作地址、未知字段属性及模型编造的默认值。
+
+- `src/form-interaction.ts`：表单定义与回复值校验，字段错误码。
+- `src/interactions.ts`：保存表单、绑定会话/任务版本、提交去重、继续对话。
+- `examples/chat-ui/form-ui.js`：通用输入控件、错误提示、已回复状态。
+
+`POST /interactions/:id/reply` 请求：
+
+```json
+{
+  "sessionId": "当前会话",
+  "requestId": "客户端生成的请求ID",
+  "values": { "city": "杭州", "area": 110 },
+  "stream": true
+}
+```
+
+服务端仅使用此前保存的字段定义校验。校验后按 `form_reply` 类型把 fields/values 序列化为结构化用户消息，调用同一会话的聊天处理器，数字和数组类型不丢失。模型继续通过工具更新草稿，**提交信息不等于授权发布**。普通聊天框仍可直接回答。
+
+表单以 interactionId 和按字段顺序规范化的答案去重：相同答案的并发/重复提交复用第一次结果，不重复调用模型；已经提交不同答案返回409。模型调用失败可重试；若期间业务草稿已变更，旧表单返回 stale_interaction，需要重新生成。普通的会话繁忙不会误判成表单过期。
+
+错误返回 `fieldErrors`；流式请求通过 error 事件携带相同结构。页面保存已输入值，字段错误出现在控件旁，成功后标记“已回复”并锁定。未成功完成的模型调用不会自动将表单标记为已回复。
+
+2026-11-17：真实 DeepSeek 生成了空城市/面积表单；负面积返回字段错误；有效回复被写入草稿为杭州、110，任务仍处于收集阶段；重复请求返回缓存结果，没有重复模型调用或发布。
+
+## 第十阶段：JSON配置与任务切换
+
+业务配置与运行参数迁到文件，核心不读取装修常量：
+
+- `configs/runtime.json`：模型轮数、请求超时、交互结束策略、交互类型/表单字段数，以及完整上下文预算/压缩参数。
+- `configs/applications/decoration.json`：角色、业务话题范围、超范围回复、演示主体、切换策略、预设字段和执行器注册名。
+- `src/config/index.ts`：严格加载、未知键/不合法范围/未知执行器检查、深冻结配置和版本hash。
+- `integrations/content-service/executors.ts`：真实代码注册执行器，配置只能引用注册名，不能指定脚本或任意函数路径。
+- `examples/local-app.ts`：组合配置、适配器和核心，不把业务选择逻辑塞进循环。
+
+默认启动读取上述两个JSON。可通过 `HARNESS_RUNTIME_CONFIG`、`HARNESS_APPLICATION_CONFIG` 指定其他文件。密钥、模型名称、服务地址和端口仍使用 `.env`。运行时轮数/超时/压缩等以JSON为准；示例应用不再读取旧的 CONTEXT_* 与 MODEL_MAX_OUTPUT_TOKENS 环境变量作为运行策略，输出上限由JSON统一传给模型。
+
+配置只在启动时加载，不热更新；修改JSON后请重启当前 `npm run dev` 或 `npm start`。每个任务记录 configVersion，运行中的配置和预设定义采用启动快照，不会把新配置悄悄应用到旧草稿。当前会话仍是内存数据，重启会失效；跨版本持久任务迁移尚未实现。
+
+### 通用策略
+
+- `stopOnAwaitingUser: true`：成功生成交互后直接结束本轮，不再让模型追加“表单已生成”式说明。控制信号来自工具注册元数据，不根据模型文字猜测。JSON客户端应同时读取 interactions；此时 reply 允许为空。
+- `taskSwitching.enabled: true`：提供 start_task / resume_task 工具。开始新任务会暂停当前未完成任务、增加版本，使旧确认和表单失效。新草稿为空，不自动复制历史事实。
+- 切换后重建本轮模型上下文，只保留当前用户输入和新任务状态；旧完整对话仍在 transcript 中。当前请求最多切换一次，后续执行共用同一个模型轮数上限。用户可在后续轮次明确要求恢复旧任务。
+- 旧任务正在执行时拒绝切换，不能把切换当成撤销已提交发布。
+- `scope.mode: prompt`：业务范围注入主模型系统指令，不增加分类Agent；它是软约束，不保证自然语言绝不跑题。不支持的 strict 模式会在启动时报错。
+- 当前仅支持 previousTask=pause、reuseDraft=ask。模糊切换和内容复用由模型补问；后端不自动复制旧字段。
+
+所有任务仍必须经过独立确认。配置 `confirmationRequired: false` 会启动失败，不能绕过版本绑定、字段校验与授权。执行器的具体网络调用、图片转存及错误处理留在适配器。
+
+本轮仅执行本地类型检查和自动化回归，没有启动额外后台服务或进行浏览器/外部模型测试。

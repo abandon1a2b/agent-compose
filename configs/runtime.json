@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "maxModelSteps": 6,
+  "requestTimeoutMs": 60000,
+  "interaction": {
+    "stopOnAwaitingUser": true,
+    "allowedKinds": ["question", "form", "confirmation"],
+    "maxFormFields": 6
+  },
+  "compression": {
+    "enabled": true,
+    "contextWindowTokens": 1000000,
+    "reservedOutputTokens": 2048,
+    "triggerRatio": 0.8,
+    "targetRatio": 0.5,
+    "keepRecentTurns": 4,
+    "summaryMaxTokens": 1024
+  }
+}

@@ -1,20 +1,66 @@
+import {
+  parseFields,
+  validateValues,
+  formFieldSchema,
+  type FormField,
+} from "./form-interaction.ts";
+import type { ChatHandler, ChatOutput, ChatEvent } from "./types.ts";
 import { randomUUID } from "node:crypto";
 import { HttpError, type Tool } from "./types.ts";
 import type { TaskManager } from "./tasks/index.ts";
 export type Card = {
   id: string;
-  kind: "question" | "confirmation";
+  kind: "question" | "confirmation" | "form";
   title: string;
   options?: string[];
+  fields?: FormField[];
+  submitLabel?: string;
+  values?: Record<string, unknown>;
   taskId?: string;
   version?: number;
   snapshot?: unknown;
   result?: import("./tasks/index.ts").Task["result"];
   status: "pending" | "completed";
 };
-export const INTERACTION_RULES =
-  "需要用户补充信息时，可调用 render_interaction 生成 question 卡片，title写问题，options给最多4个建议选项。需要发布确认时，先完成草稿，再调用 render_interaction(kind=confirmation,title=确认说明)。不要生成HTML、脚本、URL动作或假按钮。调用后用简短文字结束本轮并等待用户，不重复生成相同卡片。卡片由用户操作，模型不能代替用户授权。";
+function interactionRules(policy: {
+  allowedKinds: string[];
+  maxFormFields: number;
+}) {
+  const rules = [
+    "交互由模型调用render_interaction生成。不得生成HTML、脚本、URL动作或假按钮，不编造事实默认值；用户提交信息不是执行授权。",
+  ];
+  if (policy.allowedKinds.includes("form"))
+    rules.push(
+      `需要用户提供事实型信息时使用form，生成空输入框。fields支持text、textarea、number、select、multiselect，每次1–${policy.maxFormFields}项。表单回复以结构化form_reply传入，通过业务工具更新草稿。`,
+    );
+  if (policy.allowedKinds.includes("question"))
+    rules.push(
+      "question卡片用于选择或开放问题，最多4个建议选项，不能把猜测的事实当作答案。",
+    );
+  if (policy.allowedKinds.includes("confirmation"))
+    rules.push(
+      "需要执行确认时，先完成业务草稿，再生成confirmation卡片，模型不能代替用户授权。",
+    );
+  rules.push("生成交互后等待用户，不重复解释卡片内容。");
+  return rules.join("");
+}
+export const INTERACTION_RULES = interactionRules({
+  allowedKinds: ["question", "form", "confirmation"],
+  maxFormFields: 6,
+});
 export class Interactions {
+  private policy: { allowedKinds: string[]; maxFormFields: number };
+  constructor(
+    policy = {
+      allowedKinds: ["question", "form", "confirmation"],
+      maxFormFields: 6,
+    },
+  ) {
+    this.policy = policy;
+  }
+  instructions() {
+    return interactionRules(this.policy);
+  }
   private cards = new Map<string, { sessionId: string; card: Card }>();
   tools(
     sessionId: string,
@@ -24,13 +70,19 @@ export class Interactions {
     return [
       {
         name: "render_interaction",
+        control: "await_user",
         description:
           "按交互协议生成补问或确认卡片。确认卡片自动绑定服务端最新草稿快照。",
         parameters: {
           type: "object",
           properties: {
-            kind: { type: "string", enum: ["question", "confirmation"] },
+            kind: {
+              type: "string",
+              enum: this.policy.allowedKinds,
+            },
             title: { type: "string" },
+            fields: { type: "array", items: formFieldSchema },
+            submitLabel: { type: "string" },
             options: { type: "array", items: { type: "string" } },
           },
           required: ["kind", "title"],
@@ -40,12 +92,15 @@ export class Interactions {
           const i = input as any;
           if (
             !i ||
-            !["question", "confirmation"].includes(i.kind) ||
+            !this.policy.allowedKinds.includes(i.kind) ||
             typeof i.title !== "string" ||
             !i.title.trim() ||
             i.title.length > 300 ||
             Object.keys(i).some(
-              (k) => !["kind", "title", "options"].includes(k),
+              (k) =>
+                !["kind", "title", "options", "fields", "submitLabel"].includes(
+                  k,
+                ),
             )
           )
             throw new Error("交互描述不合法");
@@ -65,7 +120,30 @@ export class Interactions {
             status: "pending",
           };
           if (i.kind === "question") card.options = i.options ?? [];
-          else {
+          else if (i.kind === "form") {
+            card.fields = parseFields(i.fields);
+            if (card.fields.length > this.policy.maxFormFields)
+              throw new Error("字段数量超过交互配置上限");
+            if (
+              i.submitLabel !== undefined &&
+              (typeof i.submitLabel !== "string" ||
+                !i.submitLabel.trim() ||
+                i.submitLabel.length > 40)
+            )
+              throw new Error("提交按钮文案错误");
+            card.submitLabel = i.submitLabel ?? "提交信息";
+            const task = tasks.forSession(sessionId);
+            if (task) {
+              if (
+                !["collecting", "awaiting_confirmation", "failed"].includes(
+                  task.status,
+                )
+              )
+                throw new Error("当前任务不能再收集信息");
+              card.taskId = task.id;
+              card.version = task.version;
+            }
+          } else {
             const task = tasks.forSession(sessionId);
             if (
               !task ||
@@ -88,6 +166,74 @@ export class Interactions {
         },
       },
     ];
+  }
+  private replies = new Map<
+    string,
+    { fingerprint: string; promise: Promise<ChatOutput> }
+  >();
+  async reply(
+    id: string,
+    sessionId: string,
+    input: unknown,
+    requestId: string,
+    tasks: TaskManager,
+    chat: ChatHandler,
+    signal: AbortSignal,
+    emit?: (event: ChatEvent) => void,
+  ): Promise<ChatOutput> {
+    const record = this.cards.get(id);
+    if (
+      !record ||
+      record.sessionId !== sessionId ||
+      record.card.kind !== "form"
+    )
+      throw new HttpError(404, "回复表单不存在");
+    if (typeof requestId !== "string" || !requestId || requestId.length > 100)
+      throw new HttpError(400, "需要有效requestId");
+    const card = record.card,
+      values = validateValues(card.fields!, input),
+      fingerprint = JSON.stringify(values);
+    const previous = this.replies.get(id);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint)
+        throw new HttpError(
+          409,
+          "此表单已提交不同内容",
+          "interaction_already_answered",
+        );
+      return previous.promise;
+    }
+    if (card.taskId) {
+      const task = tasks.get(card.taskId, sessionId);
+      if (
+        task.version !== card.version ||
+        !["collecting", "awaiting_confirmation", "failed"].includes(task.status)
+      )
+        throw new HttpError(
+          409,
+          "表单对应的草稿已变化，请在对话中请求新的表单",
+          "stale_interaction",
+        );
+    }
+    const message = JSON.stringify({
+      type: "form_reply",
+      interactionId: id,
+      fields: card.fields!.map(({ id, label, type }) => ({ id, label, type })),
+      values,
+    });
+    const promise = Promise.resolve().then(() =>
+      chat({ sessionId, message }, signal, emit),
+    );
+    this.replies.set(id, { fingerprint, promise });
+    try {
+      const output = await promise;
+      card.status = "completed";
+      card.values = values;
+      return output;
+    } catch (error) {
+      this.replies.delete(id);
+      throw error;
+    }
   }
   async confirm(id: string, sessionId: string, tasks: TaskManager) {
     const record = this.cards.get(id);

@@ -93,7 +93,7 @@ test("concurrent confirmations execute once and bind the unchanged snapshot", as
   release();
   assert.deepEqual(await a, await b);
   assert.deepEqual(published.d, draft);
-  assert.equal(published.s.id, "mock-merchant-001");
+  assert.equal(published.s.id, "demo");
 });
 test("failed publication retries the same idempotency key", async () => {
   const keys: string[] = [];

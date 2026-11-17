@@ -19,6 +19,7 @@ export async function runLoop(
     maxInputTokens?: number;
     maxOutputTokens?: number;
     emit?: (event: ChatEvent) => void;
+    stopOnAwaitingUser?: boolean;
   } = {},
 ) {
   const messages = [...history];
@@ -53,6 +54,7 @@ export async function runLoop(
         reply: answer.content,
         modelCalls: step,
         toolCalls: trace,
+        contextChanged: false,
       };
     }
     if (
@@ -61,17 +63,42 @@ export async function runLoop(
     ) {
       throw new HttpError(502, "模型工具调用数量或标识不合法");
     }
+    if (
+      calls.some(
+        (call) =>
+          tools.find((t) => t.name === call.name)?.control === "handoff",
+      ) &&
+      calls.length !== 1
+    )
+      throw new HttpError(502, "任务切换必须单独调用");
+    let awaiting = false,
+      handoff = false;
     for (const call of calls) {
       signal.throwIfAborted();
       limits.emit?.({ type: "tool_start", name: call.name });
       const output = await executeTool(call, signal);
       limits.emit?.({ type: "tool_end", name: call.name, ok: output.ok });
+      if (output.ok) {
+        const control = tools.find((t) => t.name === call.name)?.control;
+        awaiting ||= control === "await_user";
+        handoff ||= control === "handoff";
+      }
       trace.push({ name: call.name, ok: output.ok });
       messages.push({
         role: "tool",
         toolCallId: call.id,
         content: JSON.stringify(output),
       });
+    }
+    if (handoff || (awaiting && limits.stopOnAwaitingUser)) {
+      messages.push({ role: "assistant", content: "" });
+      return {
+        messages,
+        reply: answer.content,
+        modelCalls: step,
+        toolCalls: trace,
+        contextChanged: handoff,
+      };
     }
   }
   throw new HttpError(422, `模型调用已达到 ${maxSteps} 轮上限`);

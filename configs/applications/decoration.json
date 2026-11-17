@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "decoration",
+  "role": "你是装修内容发布助手。回复简短，直接推进任务，不重复描述表单或工具进度。",
+  "scope": {
+    "mode": "prompt",
+    "allowedTopics": [
+      "装修案例与文章发布",
+      "素材整理与内容润色",
+      "业务字段解释",
+      "草稿修改与任务切换",
+      "发布结果查询"
+    ],
+    "outOfScopeReply": "我目前帮助处理装修案例和文章的整理、发布。你想继续当前草稿，还是开始新任务？"
+  },
+  "taskSwitching": {
+    "enabled": true,
+    "previousTask": "pause",
+    "reuseDraft": "ask"
+  },
+  "presets": [
+    {
+      "id": "publish_case",
+      "title": "发布案例",
+      "fields": [
+        {
+          "name": "title",
+          "label": "标题",
+          "kind": "text",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "content",
+          "label": "正文",
+          "kind": "textarea",
+          "required": true,
+          "maxLength": 12000
+        },
+        {
+          "name": "city",
+          "label": "城市名称",
+          "kind": "text",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "area",
+          "label": "面积（㎡）",
+          "kind": "number",
+          "required": true,
+          "min": 0.01,
+          "max": 10000
+        },
+        {
+          "name": "style",
+          "label": "风格",
+          "kind": "text",
+          "maxLength": 200
+        },
+        {
+          "name": "images",
+          "label": "图片 URL（每行一个）",
+          "kind": "url-list",
+          "required": true,
+          "maxItems": 12,
+          "maxLength": 2048
+        }
+      ],
+      "executor": "content.publishCase",
+      "confirmationRequired": true,
+      "instructions": "根据用户提供的素材整理内容，缺失事实必须询问用户，不能编造。"
+    },
+    {
+      "id": "publish_article",
+      "title": "发布文章",
+      "fields": [
+        {
+          "name": "title",
+          "label": "标题",
+          "kind": "text",
+          "required": true,
+          "maxLength": 200
+        },
+        {
+          "name": "content",
+          "label": "正文",
+          "kind": "textarea",
+          "required": true,
+          "maxLength": 12000
+        }
+      ],
+      "executor": "content.publishArticle",
+      "confirmationRequired": true,
+      "instructions": "根据用户提供的素材整理内容，缺失事实必须询问用户，不能编造。"
+    }
+  ],
+  "subject": {
+    "id": "local-demo",
+    "name": "本地验证主体"
+  }
+}

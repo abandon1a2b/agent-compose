@@ -13,6 +13,7 @@ export type Task = {
   preset: Preset;
   subject: { id: string; name: string };
   version: number;
+  configVersion: string;
   draft: Draft;
   missing: string[];
   status:
@@ -22,7 +23,8 @@ export type Task = {
     | "executing"
     | "succeeded"
     | "failed"
-    | "cancelled";
+    | "cancelled"
+    | "paused";
   mode: "mock" | "local";
   result?: {
     mock: boolean;
@@ -64,21 +66,34 @@ export class TaskManager {
   private inFlight = new Map<string, Promise<Task>>();
   private publisher: Publisher;
   private registry: ReturnType<typeof createPresetRegistry>;
+  private policy: {
+    switching: boolean;
+    configVersion: string;
+    subject?: Task["subject"];
+  };
   get definitions() {
     return this.registry.definitions;
   }
   constructor(
     publisher: Publisher = new MockPublisher(),
     definitions: readonly TaskDefinition[] = [],
+    policy: {
+      switching: boolean;
+      configVersion: string;
+      subject?: Task["subject"];
+    } = { switching: false, configVersion: "unversioned" },
   ) {
-    this.registry = createPresetRegistry(definitions);
+    this.registry = createPresetRegistry(structuredClone(definitions));
+    this.policy = policy;
     this.publisher = publisher;
   }
-  ensure(sessionId: string, preset?: Preset) {
+  ensure(sessionId: string, preset?: Preset): Task | undefined {
     const existing = this.forSession(sessionId);
     if (existing) {
-      if (preset && existing.preset !== preset)
+      if (preset && existing.preset !== preset) {
+        if (this.policy.switching) return this.start(sessionId, preset);
         throw new HttpError(409, "切换任务类型请新建对话");
+      }
       return existing;
     }
     if (!preset) return undefined;
@@ -88,11 +103,11 @@ export class TaskManager {
       id: randomUUID(),
       sessionId,
       preset,
-      subject:
-        this.publisher.mode === "local"
-          ? { id: "local-demo", name: "本地验证主体" }
-          : { id: "mock-merchant-001", name: "演示商家（Mock）" },
+      subject: structuredClone(
+        this.policy.subject ?? { id: "demo", name: "演示主体" },
+      ),
       version: 0,
+      configVersion: this.policy.configVersion,
       draft: {},
       missing: [],
       status: "collecting",
@@ -101,6 +116,78 @@ export class TaskManager {
     this.tasks.set(t.id, t);
     this.bySession.set(sessionId, t.id);
     return structuredClone(t);
+  }
+  private pauseCurrent(sessionId: string) {
+    const previous = this.forSession(sessionId);
+    if (!previous) return;
+    if (["approved", "executing"].includes(previous.status))
+      throw new HttpError(409, "当前任务正在执行，待结果确认后再切换");
+    if (!["succeeded", "cancelled", "paused"].includes(previous.status)) {
+      previous.status = "paused";
+      previous.version++;
+      this.tasks.set(previous.id, previous);
+    }
+  }
+  start(sessionId: string, preset: Preset): Task {
+    if (!this.policy.switching) throw new HttpError(409, "任务切换未启用");
+    this.registry.getPreset(preset);
+    this.pauseCurrent(sessionId);
+    this.bySession.delete(sessionId);
+    return this.ensure(sessionId, preset)!;
+  }
+  resume(sessionId: string, taskId: string) {
+    if (!this.policy.switching) throw new HttpError(409, "任务切换未启用");
+    const task = this.get(taskId, sessionId);
+    if (task.status !== "paused")
+      throw new HttpError(409, "只能恢复已暂停任务");
+    this.pauseCurrent(sessionId);
+    task.version++;
+    task.status = task.missing.length ? "collecting" : "awaiting_confirmation";
+    this.tasks.set(task.id, task);
+    this.bySession.set(sessionId, task.id);
+    return structuredClone(task);
+  }
+  routingTools(sessionId: string): Tool[] {
+    if (!this.policy.switching) return [];
+    return [
+      {
+        name: "start_task",
+        control: "handoff",
+        description:
+          "用户明确要求换任务或新发一份时创建新任务，原草稿保留但旧交互失效；不复制原草稿。",
+        parameters: {
+          type: "object",
+          properties: {
+            preset: { type: "string", enum: this.definitions.map((d) => d.id) },
+          },
+          required: ["preset"],
+          additionalProperties: false,
+        },
+        execute: (v) => {
+          const i = v as { preset: string };
+          if (!i || typeof i.preset !== "string") throw new Error("缺少预设");
+          return this.start(sessionId, i.preset);
+        },
+      },
+      {
+        name: "resume_task",
+        control: "handoff",
+        description: "用户明确要求回到以前任务时恢复已暂停任务；仍需重新确认。",
+        parameters: {
+          type: "object",
+          properties: { taskId: { type: "string" } },
+          required: ["taskId"],
+          additionalProperties: false,
+        },
+        execute: (v) =>
+          this.resume(sessionId, (v as { taskId: string }).taskId),
+      },
+    ];
+  }
+  routingContext(sessionId: string) {
+    return [...this.tasks.values()]
+      .filter((t) => t.sessionId === sessionId)
+      .map((t) => ({ id: t.id, preset: t.preset, status: t.status }));
   }
   forSession(sessionId: string) {
     const id = this.bySession.get(sessionId);
@@ -183,7 +270,7 @@ export class TaskManager {
     return structuredClone(t);
   }
   instructions(task: Task) {
-    return `你正在协助${this.registry.getPreset(task.preset).title}。当前为${task.mode === "local" ? "本地验证服务，会真实保存到本地，不是线上发布" : "Mock模拟执行"}。仅收集本预设所需字段：${this.registry
+    return `你正在协助${this.registry.getPreset(task.preset).title}。当前为${task.mode === "local" ? "本地验证服务，会真实保存到本地，不是线上发布" : "Mock模拟执行"}。${this.registry.getPreset(task.preset).instructions ?? ""}仅收集本预设所需字段：${this.registry
       .getPreset(task.preset)
       .fields.map((f) => f.label)
       .join(

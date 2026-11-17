@@ -75,7 +75,23 @@ function render() {
           sessionId: chat.sessionId,
           send,
           save,
-          isBusy: () => !!pending,
+          submitForm: (card, values) =>
+            send(
+              card.fields
+                .filter((f) => values[f.id] !== undefined)
+                .map(
+                  (f) =>
+                    `${f.label}：${Array.isArray(values[f.id]) ? values[f.id].join("、") : (values[f.id] ?? "")}`,
+                )
+                .join("\n"),
+              undefined,
+              {
+                card,
+                values,
+                requestId: (card.replyRequestId ??= crypto.randomUUID()),
+              },
+            ),
+          isBusy: () => !!pending || uploading,
         }),
       );
     if (message.result) {
@@ -151,7 +167,7 @@ function render() {
     $("context-info").append(metrics);
   }
 }
-async function send(text, preset) {
+async function send(text, preset, formReply) {
   if (pending || uploading || (!text.trim() && !attachments.length)) return;
   let chat = current();
   if (!chat) {
@@ -165,11 +181,16 @@ async function send(text, preset) {
     selected = chat.id;
   }
   const force = $("compress").checked;
-  const sentImages = [...attachments];
-  chat.messages.push({ role: "user", text, images: sentImages });
-  attachments = [];
+  const sentImages = formReply ? [] : [...attachments];
+  const userEntry = { role: "user", text, images: sentImages };
+  chat.messages.push(userEntry);
+  if (!formReply) attachments = [];
   renderAttachments();
-  $("input").value = "";
+  if (!formReply) $("input").value = "";
+  if (formReply) {
+    formReply.card.fieldErrors = {};
+    formReply.card.formError = "";
+  }
   error();
   pending = new AbortController();
   streamText = "";
@@ -177,23 +198,37 @@ async function send(text, preset) {
   render();
   $("conversation").scrollTop = $("conversation").scrollHeight;
   try {
-    const response = await fetch("/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: chat.sessionId,
-        message: text,
-        stream: true,
-        images: sentImages.map((file) => file.id),
-        compress: force,
-        preset: chat.preset,
-      }),
-      signal: pending.signal,
-    });
+    const response = await fetch(
+      formReply ? `/interactions/${formReply.card.id}/reply` : "/chat",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          formReply
+            ? {
+                sessionId: chat.sessionId,
+                requestId: formReply.requestId,
+                values: formReply.values,
+                stream: true,
+              }
+            : {
+                sessionId: chat.sessionId,
+                message: text,
+                stream: true,
+                images: sentImages.map((file) => file.id),
+                compress: force,
+                preset: chat.sessionId ? undefined : chat.preset,
+              },
+        ),
+        signal: pending.signal,
+      },
+    );
     if (!response.ok) {
       const body = await response.json();
       const e = new Error(body.error ?? "请求失败");
       e.status = response.status;
+      e.fieldErrors = body.fieldErrors;
+      e.code = body.code;
       throw e;
     }
     const reader = response.body.getReader(),
@@ -227,6 +262,8 @@ async function send(text, preset) {
           if (event.type === "error") {
             const e = new Error(event.message);
             e.status = event.status;
+            e.fieldErrors = event.fieldErrors;
+            e.code = event.code;
             throw e;
           }
           if (event.type === "done") result = event.result;
@@ -240,6 +277,10 @@ async function send(text, preset) {
     }
     if (!result) throw new Error("响应流中断，本轮未确认完成");
     chat.sessionId = result.sessionId;
+    if (formReply) {
+      formReply.card.status = "completed";
+      formReply.card.values = formReply.values;
+    }
 
     chat.messages.push({
       role: "assistant",
@@ -255,13 +296,26 @@ async function send(text, preset) {
         : e.status === 404
           ? "服务端会话已失效（可能已重启）。请点击「新对话」重新开始。"
           : e.message;
-    chat.messages.push({
-      role: "failed",
-      text: message + (streamText ? "\n未完成的输出：" + streamText : ""),
-    });
+    if (formReply) {
+      formReply.card.fieldErrors = e.fieldErrors ?? {};
+      formReply.card.formError = message;
+      if (
+        ["stale_interaction", "interaction_already_answered"].includes(e.code)
+      )
+        formReply.card.status = "expired";
+      if (e.fieldErrors)
+        chat.messages = chat.messages.filter((m) => m !== userEntry);
+    }
+    if (!e.fieldErrors)
+      chat.messages.push({
+        role: "failed",
+        text: message + (streamText ? "\n未完成的输出：" + streamText : ""),
+      });
     error(message);
-    $("input").value = text;
-    attachments = sentImages;
+    if (!formReply) {
+      $("input").value = text;
+      attachments = sentImages;
+    }
     renderAttachments();
   } finally {
     pending = null;

@@ -1,3 +1,4 @@
+import { FormValidationError } from "./form-interaction.ts";
 import { uploadImage, getImage } from "./images.ts";
 import type { Interactions } from "./interactions.ts";
 
@@ -89,6 +90,7 @@ export function createHttpServer(
   tasks?: TaskManager,
   interactions?: Interactions,
   uiRoot?: URL,
+  runtime: { requestTimeoutMs?: number } = {},
 ) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -100,6 +102,7 @@ export function createHttpServer(
         "text/javascript; charset=utf-8",
       ],
       "/app.css": ["app.css", "text/css; charset=utf-8"],
+      "/form-ui.js": ["form-ui.js", "text/javascript; charset=utf-8"],
     };
     if (request.method === "GET" && uiRoot && assets[path]) {
       try {
@@ -184,7 +187,7 @@ export function createHttpServer(
       return;
     }
     const interactionRoute = path.match(
-      /^\/interactions\/([a-zA-Z0-9-]+)\/confirm$/,
+      /^\/interactions\/([a-zA-Z0-9-]+)\/(confirm|reply)$/,
     );
     if (
       interactionRoute &&
@@ -199,7 +202,7 @@ export function createHttpServer(
         const chunks: Buffer[] = [];
         for await (const chunk of request) {
           size += chunk.length;
-          if (size > 4096) throw new HttpError(413, "请求过大");
+          if (size > 65536) throw new HttpError(413, "请求过大");
           chunks.push(chunk);
         }
         let body;
@@ -210,6 +213,76 @@ export function createHttpServer(
         }
         if (typeof body?.sessionId !== "string")
           throw new HttpError(400, "缺少sessionId");
+        if (interactionRoute[2] === "reply") {
+          const controller = new AbortController();
+          response.on("close", () => {
+            if (!response.writableEnded) controller.abort();
+          });
+          const signal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(runtime.requestTimeoutMs ?? 60000),
+          ]);
+          if (body.stream) {
+            response.writeHead(200, {
+              "content-type": "application/x-ndjson; charset=utf-8",
+              "cache-control": "no-cache",
+              "x-accel-buffering": "no",
+            });
+            response.flushHeaders();
+            const emit = (event: unknown) => {
+              if (response.destroyed || response.writableLength > 1048576) {
+                controller.abort();
+                response.destroy();
+                signal.throwIfAborted();
+              }
+              response.write(JSON.stringify(event) + "\n");
+            };
+            try {
+              emit({
+                type: "done",
+                result: await interactions.reply(
+                  interactionRoute[1],
+                  body.sessionId,
+                  body.values,
+                  body.requestId,
+                  tasks,
+                  chat,
+                  signal,
+                  emit,
+                ),
+              });
+            } catch (error) {
+              if (!response.destroyed)
+                emit({
+                  type: "error",
+                  status: error instanceof HttpError ? error.status : 500,
+                  message:
+                    error instanceof HttpError ? error.message : "回复处理失败",
+                  code: error instanceof HttpError ? error.code : undefined,
+                  fieldErrors:
+                    error instanceof FormValidationError
+                      ? error.fieldErrors
+                      : undefined,
+                });
+            } finally {
+              response.end();
+            }
+            return;
+          }
+          return json(
+            response,
+            200,
+            await interactions.reply(
+              interactionRoute[1],
+              body.sessionId,
+              body.values,
+              body.requestId,
+              tasks,
+              chat,
+              signal,
+            ),
+          );
+        }
         return json(
           response,
           200,
@@ -222,6 +295,11 @@ export function createHttpServer(
       } catch (error) {
         return json(response, error instanceof HttpError ? error.status : 500, {
           error: error instanceof HttpError ? error.message : "确认失败",
+          code: error instanceof HttpError ? error.code : undefined,
+          fieldErrors:
+            error instanceof FormValidationError
+              ? error.fieldErrors
+              : undefined,
         });
       }
     }
@@ -288,7 +366,7 @@ export function createHttpServer(
     });
     const signal = AbortSignal.any([
       disconnected.signal,
-      AbortSignal.timeout(60_000),
+      AbortSignal.timeout(runtime.requestTimeoutMs ?? 60000),
     ]);
     try {
       const input = await readInput(request);

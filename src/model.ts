@@ -1,12 +1,18 @@
 import { HttpError, type Model, type ToolCall } from "./types.ts";
 import { mockModel } from "./mock-model.ts";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "./token-budget.ts";
 
-type Options = { apiKey: string; baseURL?: string; model?: string };
+type Options = {
+  apiKey: string;
+  baseURL?: string;
+  model?: string;
+  maxOutputTokens?: number;
+};
 export function createDeepSeekModel(options: Options): Model {
   const baseURL = options.baseURL ?? "https://api.deepseek.com";
   const model = options.model ?? "deepseek-flash";
   return {
-    async complete(messages, tools, signal) {
+    async complete(messages, tools, signal, callOptions) {
       let response: Response;
       try {
         response = await fetch(
@@ -22,7 +28,10 @@ export function createDeepSeekModel(options: Options): Model {
               model,
               stream: false,
               thinking: { type: "disabled" },
-              max_tokens: 2048,
+              max_tokens:
+                callOptions?.maxOutputTokens ??
+                options.maxOutputTokens ??
+                DEFAULT_MAX_OUTPUT_TOKENS,
               messages: messages.map((message) => ({
                 role: message.role,
                 content: message.content,
@@ -129,8 +138,18 @@ export function loadModel(env = process.env): { mode: string; model: Model } {
     throw new Error(
       "请在 .env 中配置 DEEPSEEK_API_KEY；无密钥测试请显式设置 MODEL_MODE=mock",
     );
+  const maxOutputTokens = Number(
+    env.MODEL_MAX_OUTPUT_TOKENS ?? DEFAULT_MAX_OUTPUT_TOKENS,
+  );
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1)
+    throw new Error("MODEL_MAX_OUTPUT_TOKENS 必须是正整数");
   return {
     mode,
-    model: createDeepSeekModel({ baseURL, apiKey: apiKey.trim(), model }),
+    model: createDeepSeekModel({
+      baseURL,
+      apiKey: apiKey.trim(),
+      model,
+      maxOutputTokens,
+    }),
   };
 }

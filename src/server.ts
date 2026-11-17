@@ -31,7 +31,7 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (!value || typeof value !== "object")
     throw new HttpError(400, "请求必须是对象");
-  const { message, sessionId } = value as Record<string, unknown>;
+  const { message, sessionId, compress } = value as Record<string, unknown>;
   if (typeof message !== "string" || !message.trim() || message.length > 8000) {
     throw new HttpError(400, "message 必须是 1–8000 字符的文本");
   }
@@ -41,9 +41,12 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   ) {
     throw new HttpError(400, "sessionId 格式错误");
   }
+  if (compress !== undefined && typeof compress !== "boolean")
+    throw new HttpError(400, "compress 必须是布尔值");
   return {
     message: message.trim(),
     sessionId: sessionId as string | undefined,
+    compress: compress as boolean | undefined,
   };
 }
 

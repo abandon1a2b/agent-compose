@@ -2,9 +2,13 @@ import { createChatHandler } from "./chat.ts";
 import { loadModel } from "./model.ts";
 import { createHttpServer } from "./server.ts";
 import { tools } from "./tools.ts";
+import { loadCompressionPolicy } from "./compression.ts";
 
 const { mode, model } = loadModel();
-const server = createHttpServer(createChatHandler(model, tools), mode);
+const server = createHttpServer(
+  createChatHandler(model, tools, loadCompressionPolicy()),
+  mode,
+);
 const port = Number(process.env.PORT ?? 4318);
 server.listen(port, "127.0.0.1", () => {
   console.log(`Agent Harness · http://127.0.0.1:${port} · model=${mode}`);

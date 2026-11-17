@@ -16,14 +16,20 @@ export type Model = {
     messages: Message[],
     tools: Tool[],
     signal: AbortSignal,
+    options?: { maxOutputTokens?: number },
   ) => Promise<Message>;
 };
-export type ChatInput = { sessionId?: string; message: string };
+export type ChatInput = {
+  sessionId?: string;
+  message: string;
+  compress?: boolean;
+};
 export type ChatOutput = {
   sessionId: string;
   reply: string;
   modelCalls: number;
   toolCalls: { name: string; ok: boolean }[];
+  compression: import("./compression.ts").CompressionInfo;
 };
 export type ChatHandler = (
   input: ChatInput,

@@ -50,6 +50,10 @@ test("HTTP health, conversation continuation, isolated histories and input valid
     assert.notEqual(first.sessionId, separate.sessionId);
     assert.equal((await post({ message: "" })).status, 400);
     assert.equal(
+      (await post({ message: "你好", compress: "yes" })).status,
+      400,
+    );
+    assert.equal(
       (await post({ message: "你好", sessionId: "missing" })).status,
       404,
     );

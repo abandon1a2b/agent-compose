@@ -1,4 +1,5 @@
 import { HttpError, type Message, type Model, type Tool } from "./types.ts";
+import { estimateInputTokens } from "./token-budget.ts";
 
 /** One user turn: model -> tools -> model, until an answer or the step limit. */
 export async function runLoop(
@@ -7,12 +8,23 @@ export async function runLoop(
   history: Message[],
   signal: AbortSignal,
   maxSteps = 6,
+  limits: { maxInputTokens?: number; maxOutputTokens?: number } = {},
 ) {
   const messages = [...history];
   const trace: { name: string; ok: boolean }[] = [];
   for (let step = 1; step <= maxSteps; step++) {
     signal.throwIfAborted();
-    const answer = await model.complete(messages, tools, signal);
+    if (
+      estimateInputTokens(messages, tools) > (limits.maxInputTokens ?? Infinity)
+    ) {
+      throw new HttpError(
+        422,
+        "当前回合的输入或工具结果超过上下文预算；未拆分工具链，请缩小输入或工具结果",
+      );
+    }
+    const answer = await model.complete(messages, tools, signal, {
+      maxOutputTokens: limits.maxOutputTokens,
+    });
     signal.throwIfAborted();
     if (answer.role !== "assistant")
       throw new HttpError(502, "模型返回了错误的消息角色");

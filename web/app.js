@@ -1,4 +1,4 @@
-import { createTaskUI } from "/task-ui.js";
+import { renderInteraction } from "/interaction-ui.js";
 const $ = (id) => document.getElementById(id);
 const storageKey = "agent-harness-chats-v1";
 let chats = [],
@@ -6,6 +6,8 @@ let chats = [],
   pending = null,
   registeredTools = [];
 let streamText = "";
+let attachments = [];
+let uploading = false;
 try {
   chats = JSON.parse(sessionStorage.getItem(storageKey) || "[]");
   if (!Array.isArray(chats)) chats = [];
@@ -30,7 +32,6 @@ function error(text = "") {
   $("error").hidden = !text;
 }
 function render() {
-  taskUI.render();
   const chat = current();
   document.body.classList.toggle("empty", !chat?.messages.length);
   $("welcome").hidden = !!chat?.messages.length;
@@ -60,6 +61,23 @@ function render() {
     if (message.role === "assistant")
       box.append(el("div", "◈  Harness", "author"));
     box.append(el("div", message.text, "content"));
+    for (const file of message.images ?? []) {
+      const img = el("img");
+      img.src = file.path;
+      img.alt = file.name;
+      img.className = "message-image";
+      box.append(img);
+    }
+    for (const card of message.result?.interactions ?? [])
+      box.append(
+        renderInteraction(card, {
+          el,
+          sessionId: chat.sessionId,
+          send,
+          save,
+          isBusy: () => !!pending,
+        }),
+      );
     if (message.result) {
       const r = message.result;
       const details = el("details", undefined, "trace");
@@ -97,8 +115,10 @@ function render() {
   }
   $("send").hidden = !!pending;
   $("stop").hidden = !pending;
-  $("send").disabled = !$("input").value.trim();
+  $("send").disabled =
+    uploading || (!$("input").value.trim() && !attachments.length);
   $("new-chat").disabled = !!pending;
+  $("attach").disabled = !!pending || uploading;
   $("compress").disabled = !!pending;
   $("session-info").textContent = chat?.sessionId ?? "尚未创建服务端会话";
   $("context-info").replaceChildren();
@@ -132,7 +152,7 @@ function render() {
   }
 }
 async function send(text, preset) {
-  if (pending || !text.trim()) return;
+  if (pending || uploading || (!text.trim() && !attachments.length)) return;
   let chat = current();
   if (!chat) {
     chat = {
@@ -145,7 +165,10 @@ async function send(text, preset) {
     selected = chat.id;
   }
   const force = $("compress").checked;
-  chat.messages.push({ role: "user", text });
+  const sentImages = [...attachments];
+  chat.messages.push({ role: "user", text, images: sentImages });
+  attachments = [];
+  renderAttachments();
   $("input").value = "";
   error();
   pending = new AbortController();
@@ -161,6 +184,7 @@ async function send(text, preset) {
         sessionId: chat.sessionId,
         message: text,
         stream: true,
+        images: sentImages.map((file) => file.id),
         compress: force,
         preset: chat.preset,
       }),
@@ -189,10 +213,10 @@ async function send(text, preset) {
           if (!line.trim()) continue;
           const event = JSON.parse(line);
           if (event.type === "step_start") {
-            streamText = "";
+            if (streamText) streamText += "\n\n";
             if ($("stream-status"))
               $("stream-status").textContent = `模型第 ${event.step} 轮生成中…`;
-            if ($("stream-text")) $("stream-text").textContent = "";
+            if ($("stream-text")) $("stream-text").textContent = streamText;
           }
           if (event.type === "text_delta") {
             streamText += event.text;
@@ -216,8 +240,12 @@ async function send(text, preset) {
     }
     if (!result) throw new Error("响应流中断，本轮未确认完成");
     chat.sessionId = result.sessionId;
-    if (result.task) chat.task = result.task;
-    chat.messages.push({ role: "assistant", text: result.reply, result });
+
+    chat.messages.push({
+      role: "assistant",
+      text: result.textParts?.join("\n\n") || result.reply,
+      result,
+    });
     $("compress").checked = false;
     $("status").textContent = "回答已完成 · 会话仅存于服务端内存";
   } catch (e) {
@@ -233,6 +261,8 @@ async function send(text, preset) {
     });
     error(message);
     $("input").value = text;
+    attachments = sentImages;
+    renderAttachments();
   } finally {
     pending = null;
     save();
@@ -246,7 +276,8 @@ $("composer").onsubmit = (e) => {
   void send($("input").value.trim());
 };
 $("input").oninput = () => {
-  $("send").disabled = !$("input").value.trim();
+  $("send").disabled =
+    uploading || (!$("input").value.trim() && !attachments.length);
 };
 $("input").onkeydown = (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -260,6 +291,8 @@ $("new-chat").onclick = () => {
   error();
   $("input").value = "";
   $("compress").checked = false;
+  attachments = [];
+  renderAttachments();
   $("sidebar").classList.remove("open");
   render();
   $("input").focus();
@@ -299,18 +332,6 @@ $("open-tools").onclick = async () => {
     $("tools-list").replaceChildren(el("p", e.message));
   }
 };
-const taskUI = createTaskUI({
-  el,
-  current,
-  save,
-  render,
-  error,
-  isBusy: () => !!pending,
-  startPreset: (text, preset) => {
-    selected = undefined;
-    void send(text, preset);
-  },
-});
 render();
 fetch("/health")
   .then(async (response) => {
@@ -325,3 +346,84 @@ fetch("/health")
     $("connection").textContent = "连接失败";
     error("无法连接本地服务，请检查 npm start 是否正在运行。");
   });
+
+function renderAttachments() {
+  const box = $("attachments");
+  box.replaceChildren();
+  for (const file of attachments) {
+    const item = el("div");
+    const image = el("img");
+    image.src = file.path;
+    image.alt = file.name;
+    const remove = el("button", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `移除 ${file.name}`);
+    remove.onclick = () => {
+      attachments = attachments.filter((x) => x.id !== file.id);
+      renderAttachments();
+    };
+    item.append(image, remove);
+    box.append(item);
+  }
+  $("send").disabled =
+    uploading || (!$("input").value.trim() && !attachments.length);
+}
+$("attach").onclick = () => $("file-input").click();
+$("file-input").onchange = () => {
+  const files = [...$("file-input").files];
+  $("file-input").value = "";
+  void uploadFiles(files);
+};
+$("input").addEventListener("paste", (event) => {
+  const files = [...(event.clipboardData?.files ?? [])];
+  if (files.length) {
+    event.preventDefault();
+    void uploadFiles(files);
+  }
+});
+async function uploadFiles(files) {
+  if (pending || uploading) return;
+  if (attachments.length + files.length > 4) {
+    error("每条消息最多4张图片");
+    return;
+  }
+  uploading = true;
+  $("attach").disabled = true;
+  renderAttachments();
+  try {
+    for (const file of files) {
+      if (file.size > 2 * 1024 * 1024) throw new Error("单张图片上限2MB");
+      const response = await fetch("/images", {
+        method: "POST",
+        headers: {
+          "content-type": file.type,
+          "x-file-name": encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      attachments.push(data);
+    }
+  } catch (e) {
+    error(e.message);
+  } finally {
+    uploading = false;
+    $("attach").disabled = false;
+    renderAttachments();
+  }
+}
+fetch("/presets")
+  .then((r) => r.json())
+  .then((presets) => {
+    for (const p of presets) {
+      const button = el("button", p.title);
+      button.onclick = () => {
+        if (pending) return;
+        selected = undefined;
+        void send(`我要${p.title}，请引导我提供内容。`, p.id);
+      };
+      $("preset-entries").append(button);
+    }
+  })
+  .catch(() => error("入口加载失败"));

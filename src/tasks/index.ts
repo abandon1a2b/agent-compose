@@ -168,7 +168,7 @@ export class TaskManager {
       .fields.map((f) => f.label)
       .join(
         "、",
-      )}。优先调用update_draft记录用户提供的信息；根据missing补问，每次最多两项。不得编造事实、URL或数值。参数完整后提示用户查看页面草稿并点击确认，聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
+      )}。优先调用update_draft记录用户提供的信息；根据missing补问，每次最多两项。不得编造事实、URL或数值。参数完整后调用 render_interaction 生成 confirmation 卡片；用户需要修改时通过对话更新草稿，再生成新卡片。聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
   }
   tools(sessionId: string): Tool[] {
     const t = this.forSession(sessionId);

@@ -52,9 +52,10 @@
         </div>
         <div id="messages" aria-live="polite"></div>
       </section>
-      <div id="task-panel"></div>
+
       <div class="composer-area">
         <div id="error" role="alert" hidden></div>
+        <div id="attachments"></div>
         <form id="composer">
           <textarea
             id="input"
@@ -62,9 +63,17 @@
             placeholder="发送消息…"
             rows="2"
             maxlength="8000"
-            required
           ></textarea>
           <div class="composer-bottom">
+            <button id="attach" type="button" aria-label="添加图片">
+              ＋ 图片</button
+            ><input
+              id="file-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              hidden
+            />
             <label title="发送下一条消息时请求压缩历史；历史不足时会跳过"
               ><input id="compress" type="checkbox" />
               下次发送时压缩上下文</label
@@ -101,13 +110,6 @@
       <p class="notice">
         会话仅保存在服务端内存中，服务重启后请新建对话。浏览器记录仅用于恢复页面，不会冒充模型上下文。
       </p>
-    </dialog>
-    <dialog id="draft-dialog">
-      <div class="dialog-header">
-        <h2>发布预览 · Mock</h2>
-        <button id="close-draft" aria-label="关闭草稿">×</button>
-      </div>
-      <div id="draft-body"></div>
     </dialog>
   </body>
 </html>

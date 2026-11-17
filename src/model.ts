@@ -35,7 +35,15 @@ export function createDeepSeekModel(options: Options): Model {
                 DEFAULT_MAX_OUTPUT_TOKENS,
               messages: messages.map((message) => ({
                 role: message.role,
-                content: message.content,
+                content: message.images?.length
+                  ? [
+                      { type: "text", text: message.content },
+                      ...message.images.map((image) => ({
+                        type: "image_url",
+                        image_url: { url: image.url },
+                      })),
+                    ]
+                  : message.content,
                 ...(message.toolCallId
                   ? { tool_call_id: message.toolCallId }
                   : {}),

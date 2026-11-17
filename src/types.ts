@@ -2,6 +2,7 @@ export type ToolCall = { id: string; name: string; arguments: string };
 export type Message = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  images?: import("./images.ts").ImageAttachment[];
   toolCalls?: ToolCall[];
   toolCallId?: string;
 };
@@ -23,10 +24,13 @@ export type ChatInput = {
   sessionId?: string;
   message: string;
   compress?: boolean;
+  images?: string[];
   stream?: boolean;
   preset?: import("./tasks/index.ts").Preset;
 };
 export type ChatOutput = {
+  textParts?: string[];
+  interactions?: import("./interactions.ts").Card[];
   task?: import("./tasks/index.ts").Task;
   sessionId: string;
   reply: string;

@@ -1,3 +1,5 @@
+import { uploadImage, getImage } from "./images.ts";
+import type { Interactions } from "./interactions.ts";
 import { presets, isPreset } from "./tasks/presets.ts";
 import {
   createServer,
@@ -39,11 +41,13 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (!value || typeof value !== "object")
     throw new HttpError(400, "请求必须是对象");
-  const { message, sessionId, compress, preset, stream } = value as Record<
-    string,
-    unknown
-  >;
-  if (typeof message !== "string" || !message.trim() || message.length > 8000) {
+  const { message, sessionId, compress, preset, stream, images } =
+    value as Record<string, unknown>;
+  if (
+    typeof message !== "string" ||
+    (!message.trim() && !(Array.isArray(images) && images.length)) ||
+    message.length > 8000
+  ) {
     throw new HttpError(400, "message 必须是 1–8000 字符的文本");
   }
   if (
@@ -58,9 +62,17 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
     throw new HttpError(400, "未知任务预设");
   if (stream !== undefined && typeof stream !== "boolean")
     throw new HttpError(400, "stream 必须是布尔值");
+  if (
+    images !== undefined &&
+    (!Array.isArray(images) ||
+      images.length > 4 ||
+      images.some((x) => typeof x !== "string"))
+  )
+    throw new HttpError(400, "images 最多4个上传图片ID");
   return {
+    images: images as string[] | undefined,
     stream: stream as boolean | undefined,
-    message: message.trim(),
+    message: message.trim() || "请查看这些图片",
     sessionId: sessionId as string | undefined,
     compress: compress as boolean | undefined,
     preset: preset as Preset | undefined,
@@ -72,13 +84,17 @@ export function createHttpServer(
   modelMode: string,
   tools: Tool[] = [],
   tasks?: TaskManager,
+  interactions?: Interactions,
 ) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     const assets: Record<string, [string, string]> = {
       "/": ["index.html", "text/html; charset=utf-8"],
       "/app.js": ["app.js", "text/javascript; charset=utf-8"],
-      "/task-ui.js": ["task-ui.js", "text/javascript; charset=utf-8"],
+      "/interaction-ui.js": [
+        "interaction-ui.js",
+        "text/javascript; charset=utf-8",
+      ],
       "/app.css": ["app.css", "text/css; charset=utf-8"],
     };
     if (request.method === "GET" && assets[path]) {
@@ -121,6 +137,89 @@ export function createHttpServer(
           parameters,
         })),
       );
+    }
+    if (path === "/images" && request.method === "POST") {
+      try {
+        let size = 0;
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > 2 * 1024 * 1024) throw new HttpError(413, "图片超过2MB");
+          chunks.push(chunk);
+        }
+        return json(
+          response,
+          201,
+          uploadImage(
+            Buffer.concat(chunks),
+            request.headers["content-type"]?.split(";")[0] ?? "",
+            decodeURIComponent(
+              String(request.headers["x-file-name"] ?? "image"),
+            ),
+          ),
+        );
+      } catch (error) {
+        return json(response, error instanceof HttpError ? error.status : 400, {
+          error: error instanceof Error ? error.message : "上传失败",
+        });
+      }
+    }
+    const imageRoute = path.match(/^\/images\/([a-zA-Z0-9-]+)$/);
+    if (imageRoute && request.method === "GET") {
+      try {
+        const image = getImage(imageRoute[1]);
+        response.writeHead(200, {
+          "content-type": image.mime,
+          "x-content-type-options": "nosniff",
+          "cache-control": "private, no-store",
+        });
+        response.end(image.bytes);
+      } catch {
+        json(response, 404, { error: "图片不存在" });
+      }
+      return;
+    }
+    const interactionRoute = path.match(
+      /^\/interactions\/([a-zA-Z0-9-]+)\/confirm$/,
+    );
+    if (
+      interactionRoute &&
+      request.method === "POST" &&
+      interactions &&
+      tasks
+    ) {
+      try {
+        if (!request.headers["content-type"]?.startsWith("application/json"))
+          throw new HttpError(415, "请使用JSON");
+        let size = 0;
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > 4096) throw new HttpError(413, "请求过大");
+          chunks.push(chunk);
+        }
+        let body;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          throw new HttpError(400, "JSON错误");
+        }
+        if (typeof body?.sessionId !== "string")
+          throw new HttpError(400, "缺少sessionId");
+        return json(
+          response,
+          200,
+          await interactions.confirm(
+            interactionRoute[1],
+            body.sessionId,
+            tasks,
+          ),
+        );
+      } catch (error) {
+        return json(response, error instanceof HttpError ? error.status : 500, {
+          error: error instanceof HttpError ? error.message : "确认失败",
+        });
+      }
     }
     const taskRoute = path.match(
       /^\/tasks\/([^/]+)(?:\/(draft|confirm|cancel))?$/,

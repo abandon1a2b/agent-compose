@@ -36,5 +36,10 @@ export function estimateInputTokens(
       parameters,
     })),
   });
-  return estimateTextTokens(payload) + messages.length * 8 + 16;
+  return (
+    estimateTextTokens(payload) +
+    messages.length * 8 +
+    16 +
+    messages.reduce((sum, m) => sum + (m.images?.length ?? 0) * 4096, 0)
+  );
 }

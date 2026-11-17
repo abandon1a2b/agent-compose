@@ -195,7 +195,19 @@ export async function compactContext(options: {
         role: "user",
         content: JSON.stringify({
           previousSummary: conversation.summary ?? "",
-          turns: old,
+          turns: old.map((turn) =>
+            turn.map(({ images, ...message }) => ({
+              ...message,
+              ...(images
+                ? {
+                    imageReferences: images.map((i) => ({
+                      name: i.name,
+                      reference: i.reference,
+                    })),
+                  }
+                : {}),
+            })),
+          ),
         }),
       },
     ];

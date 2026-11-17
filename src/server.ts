@@ -4,6 +4,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { readFileSync } from "node:fs";
+import type { TaskManager, Preset } from "./tasks/index.ts";
 import {
   HttpError,
   type ChatHandler,
@@ -37,7 +38,10 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (!value || typeof value !== "object")
     throw new HttpError(400, "请求必须是对象");
-  const { message, sessionId, compress } = value as Record<string, unknown>;
+  const { message, sessionId, compress, preset } = value as Record<
+    string,
+    unknown
+  >;
   if (typeof message !== "string" || !message.trim() || message.length > 8000) {
     throw new HttpError(400, "message 必须是 1–8000 字符的文本");
   }
@@ -49,10 +53,16 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (compress !== undefined && typeof compress !== "boolean")
     throw new HttpError(400, "compress 必须是布尔值");
+  if (
+    preset !== undefined &&
+    !["publish_case", "publish_article"].includes(preset as string)
+  )
+    throw new HttpError(400, "未知任务预设");
   return {
     message: message.trim(),
     sessionId: sessionId as string | undefined,
     compress: compress as boolean | undefined,
+    preset: preset as Preset | undefined,
   };
 }
 
@@ -60,6 +70,7 @@ export function createHttpServer(
   chat: ChatHandler,
   modelMode: string,
   tools: Tool[] = [],
+  tasks?: TaskManager,
 ) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -89,12 +100,77 @@ export function createHttpServer(
       return json(
         response,
         200,
-        tools.map(({ name, description, parameters }) => ({
+        (tasks?.forSession(
+          new URL(request.url!, "http://localhost").searchParams.get(
+            "sessionId",
+          ) ?? "",
+        )
+          ? tasks.tools(
+              new URL(request.url!, "http://localhost").searchParams.get(
+                "sessionId",
+              )!,
+            )
+          : tools
+        ).map(({ name, description, parameters }) => ({
           name,
           description,
           parameters,
         })),
       );
+    }
+    const taskRoute = path.match(
+      /^\/tasks\/([^/]+)(?:\/(draft|confirm|cancel))?$/,
+    );
+    if (tasks && taskRoute) {
+      try {
+        const [, id, action] = taskRoute;
+        if (request.method === "GET" && !action) {
+          const sessionId = new URL(
+            request.url!,
+            "http://localhost",
+          ).searchParams.get("sessionId");
+          if (!sessionId) throw new HttpError(400, "缺少 sessionId");
+          return json(response, 200, tasks.get(id, sessionId));
+        }
+        if (request.method !== "POST" || !action)
+          throw new HttpError(404, "接口不存在");
+        if (!request.headers["content-type"]?.startsWith("application/json"))
+          throw new HttpError(415, "请使用 application/json");
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of request) {
+          chunks.push(chunk);
+          size += chunk.length;
+          if (size > 65536) throw new HttpError(413, "请求过大");
+        }
+        let data: any;
+        try {
+          data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          throw new HttpError(400, "JSON 格式错误");
+        }
+        if (!data || typeof data.sessionId !== "string")
+          throw new HttpError(400, "缺少 sessionId");
+        if (action === "cancel")
+          return json(response, 200, tasks.cancel(id, data.sessionId));
+        if (!Number.isSafeInteger(data.version))
+          throw new HttpError(400, "缺少草稿版本");
+        if (action === "draft")
+          return json(
+            response,
+            200,
+            tasks.update(id, data.sessionId, data.version, data.patch),
+          );
+        return json(
+          response,
+          200,
+          await tasks.confirm(id, data.sessionId, data.version),
+        );
+      } catch (error) {
+        return json(response, error instanceof HttpError ? error.status : 500, {
+          error: error instanceof HttpError ? error.message : "任务操作失败",
+        });
+      }
     }
     if (request.method !== "POST" || path !== "/chat") {
       return json(response, 404, { error: "接口不存在" });

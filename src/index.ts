@@ -1,3 +1,4 @@
+import { TaskManager } from "./tasks/index.ts";
 import { createChatHandler } from "./chat.ts";
 import { loadModel } from "./model.ts";
 import { createHttpServer } from "./server.ts";
@@ -5,10 +6,12 @@ import { tools } from "./tools/index.ts";
 import { loadCompressionPolicy } from "./compression.ts";
 
 const { mode, model } = loadModel();
+const tasks = new TaskManager();
 const server = createHttpServer(
-  createChatHandler(model, tools, loadCompressionPolicy()),
+  createChatHandler(model, tools, loadCompressionPolicy(), tasks),
   mode,
   tools,
+  tasks,
 );
 const port = Number(process.env.PORT ?? 4318);
 server.listen(port, "127.0.0.1", () => {

@@ -542,4 +542,81 @@ dialog p {
   }
 }
 
-#messages:empty { display: none; }
+#messages:empty {
+  display: none;
+}
+#task-panel {
+  width: 100%;
+  max-width: 820px;
+  align-self: center;
+  padding: 0 26px;
+}
+.task-card {
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 12px 15px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  background: #fafafa;
+}
+.task-card small {
+  color: #888;
+  flex: 1;
+}
+.task-card button {
+  border: 1px solid #ddd;
+  background: white;
+  padding: 8px;
+}
+.draft-form {
+  background: white;
+  border: 0;
+  padding: 0;
+}
+.draft-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 14px 0;
+  font-size: 12px;
+  color: #666;
+}
+.draft-form input,
+.draft-form textarea {
+  border: 1px solid #ddd;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fafafa;
+  outline: none;
+  width: 100%;
+  font-size: 14px;
+}
+.draft-form textarea {
+  min-height: 100px;
+  max-height: 260px;
+  resize: vertical;
+}
+.draft-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.draft-actions button {
+  border: 1px solid #ddd;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.draft-actions .confirm-publish {
+  background: #222;
+  color: white;
+}
+.publish-result {
+  background: #f4f4f4;
+  padding: 12px;
+  white-space: pre-wrap;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

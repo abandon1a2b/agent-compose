@@ -23,8 +23,10 @@ export type ChatInput = {
   sessionId?: string;
   message: string;
   compress?: boolean;
+  preset?: import("./tasks/index.ts").Preset;
 };
 export type ChatOutput = {
+  task?: import("./tasks/index.ts").Task;
   sessionId: string;
   reply: string;
   modelCalls: number;

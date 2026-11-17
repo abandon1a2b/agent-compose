@@ -38,6 +38,8 @@
           <h1>有什么可以帮你？</h1>
           <p>聊一个问题，或让工具帮你完成计算。</p>
           <div class="suggestions">
+            <button data-preset="publish_case">发布案例</button>
+            <button data-preset="publish_article">发布文章</button>
             <button data-prompt="请调用工具获取当前 UTC 时间。">
               ◷ 查询当前时间</button
             ><button
@@ -51,6 +53,7 @@
         </div>
         <div id="messages" aria-live="polite"></div>
       </section>
+      <div id="task-panel"></div>
       <div class="composer-area">
         <div id="error" role="alert" hidden></div>
         <form id="composer">
@@ -99,6 +102,13 @@
       <p class="notice">
         会话仅保存在服务端内存中，服务重启后请新建对话。浏览器记录仅用于恢复页面，不会冒充模型上下文。
       </p>
+    </dialog>
+    <dialog id="draft-dialog">
+      <div class="dialog-header">
+        <h2>发布预览 · Mock</h2>
+        <button id="close-draft" aria-label="关闭草稿">×</button>
+      </div>
+      <div id="draft-body"></div>
     </dialog>
   </body>
 </html>

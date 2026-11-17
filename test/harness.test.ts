@@ -40,6 +40,11 @@ test("HTTP health, conversation continuation, isolated histories and input valid
       status: "ok",
       modelMode: "mock",
     });
+    const page = await fetch(`${base}/`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Harness/);
+    assert.equal((await fetch(`${base}/app.js`)).status, 200);
+    assert.equal((await fetch(`${base}/.env`)).status, 404);
     const first = await (await post({ message: "我叫小明" })).json();
     const second = await (
       await post({ message: "上一条说了什么", sessionId: first.sessionId })

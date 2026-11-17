@@ -3,6 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { readFileSync } from "node:fs";
 import {
   HttpError,
   type ChatHandler,
@@ -62,6 +63,25 @@ export function createHttpServer(
 ) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    const assets: Record<string, [string, string]> = {
+      "/": ["index.html", "text/html; charset=utf-8"],
+      "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+      "/app.css": ["app.css", "text/css; charset=utf-8"],
+    };
+    if (request.method === "GET" && assets[path]) {
+      try {
+        const [file, contentType] = assets[path];
+        const body = readFileSync(new URL(`../web/${file}`, import.meta.url));
+        response.writeHead(200, {
+          "content-type": contentType,
+          "cache-control": "no-cache",
+        });
+        response.end(body);
+      } catch {
+        json(response, 500, { error: "页面资源不可用" });
+      }
+      return;
+    }
     if (request.method === "GET" && path === "/health") {
       return json(response, 200, { status: "ok", modelMode });
     }

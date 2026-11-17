@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Harness · 对话</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <aside id="sidebar">
+      <a class="brand" href="/">◈ <strong>Harness</strong></a
+      ><button id="new-chat" class="new-chat">＋ 新对话</button>
+      <div class="side-label">最近的对话</div>
+      <nav id="history"></nav>
+      <div class="side-bottom">
+        <span class="dot"></span> 本地工作空间<small
+          >连接 agent-harness · 4318</small
+        >
+      </div>
+    </aside>
+    <main>
+      <header>
+        <button id="menu" class="icon" aria-label="打开菜单">☰</button
+        ><strong
+          >Harness <span class="muted">/</span>
+          <span id="mode">正在连接</span></strong
+        >
+        <div class="header-right">
+          <span id="connection">连接中</span
+          ><button id="open-tools">⌘ 工具与上下文</button>
+        </div>
+      </header>
+      <section id="conversation" aria-label="对话内容">
+        <div id="welcome">
+          <div class="welcome-mark">◈</div>
+          <h1>有什么可以帮你？</h1>
+          <p>聊一个问题，或让工具帮你完成计算。</p>
+          <div class="suggestions">
+            <button data-prompt="请调用工具获取当前 UTC 时间。">
+              ◷ 查询当前时间</button
+            ><button
+              data-prompt="请分两步调用calculate工具：先计算137乘29，再把结果加41。"
+            >
+              ＋ 试试连续计算</button
+            ><button data-prompt="你好，请简短介绍一下你能做什么。">
+              ↗ 开始聊聊
+            </button>
+          </div>
+        </div>
+        <div id="messages" aria-live="polite"></div>
+      </section>
+      <div class="composer-area">
+        <div id="error" role="alert" hidden></div>
+        <form id="composer">
+          <textarea
+            id="input"
+            aria-label="输入消息"
+            placeholder="发送消息…"
+            rows="2"
+            maxlength="8000"
+            required
+          ></textarea>
+          <div class="composer-bottom">
+            <label title="发送下一条消息时请求压缩历史；历史不足时会跳过"
+              ><input id="compress" type="checkbox" />
+              下次发送时压缩上下文</label
+            ><button id="send" type="submit" aria-label="发送消息">↑</button
+            ><button id="stop" type="button" aria-label="停止生成" hidden>
+              ■
+            </button>
+          </div>
+        </form>
+        <div class="footnote">
+          <span id="status">消息通过本地服务调用模型</span
+          ><span>Enter 发送 · Shift + Enter 换行</span>
+        </div>
+      </div>
+    </main>
+    <dialog id="tools-dialog">
+      <div class="dialog-header">
+        <div>
+          <small>DEVELOPER VIEW</small>
+          <h2>工具与上下文</h2>
+        </div>
+        <button id="close-tools" class="icon" aria-label="关闭面板">×</button>
+      </div>
+      <section>
+        <h3>当前对话</h3>
+        <p id="session-info" class="muted">尚未创建服务端会话</p>
+        <div id="context-info"></div>
+      </section>
+      <section>
+        <h3>已注册工具 <span id="tool-count"></span></h3>
+        <p class="muted">直接读取当前服务的 /tools 接口。</p>
+        <div id="tools-list"></div>
+      </section>
+      <p class="notice">
+        会话仅保存在服务端内存中，服务重启后请新建对话。浏览器记录仅用于恢复页面，不会冒充模型上下文。
+      </p>
+    </dialog>
+  </body>
+</html>

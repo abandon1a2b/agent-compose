@@ -141,7 +141,8 @@ curl http://127.0.0.1:4318/chat \
 ## 代码边界
 
 ```text
-src/index.ts       组装模型、工具和 HTTP 服务
+src/index.ts       核心库出口（无启动副作用）
+examples/local-app.ts  验证应用组装与启动
 src/server.ts      HTTP 参数与响应
 src/chat.ts        会话历史；同一会话禁止并发修改
 src/compression.ts 压缩策略、回合切分、摘要与回退
@@ -215,7 +216,7 @@ curl http://127.0.0.1:4318/chat \
 
 ## 第四阶段：直接调用本服务的页面
 
-运行 `npm start`，打开 <http://127.0.0.1:4318/>。页面位于 `web/`，由本服务按固定白名单提供静态资源，无需构建或单独启动前端。
+运行 `npm start`，打开 <http://127.0.0.1:4318/>。页面位于 `examples/chat-ui/`，由本服务按固定白名单提供静态资源，无需构建或单独启动前端。
 
 - 普通聊天与继续会话调用 `POST /chat`，自动携带返回的 sessionId。
 - “工具与上下文”读取 `GET /tools`，展示最近请求的估算上下文占比。
@@ -275,8 +276,8 @@ curl http://127.0.0.1:4318/chat \
 - `src/sse.ts`：供应商 SSE 增量解码，处理跨字节的 UTF-8 与事件边界。
 - `src/model.ts`：DeepSeek 增量文本和工具调用参数拼接。
 - `src/loop.ts` / `src/server.ts`：执行进度与 HTTP 事件输出。
-- `web/app.js`：通用聊天、流接收、调用记录。
-- `web/task-ui.js`：当时的通用字段表单，已在第七阶段删除。
+- `examples/chat-ui/app.js`：通用聊天、流接收、调用记录。
+- `examples/chat-ui/task-ui.js`：当时的通用字段表单，已在第七阶段删除。
 - `src/tasks/presets.ts`：业务入口、字段标签/类型/必填项，以及按字段类型执行的公共校验。
 - `src/tasks/index.ts`：通用任务状态和授权门槛，不为案例/文章分叉流程。
 
@@ -286,7 +287,7 @@ curl http://127.0.0.1:4318/chat \
 
 ## 第七阶段：图片输入 + 模型生成的交互协议
 
-移除固定任务状态栏、专用草稿弹窗和字段表单。`web/task-ui.js` 已删除。业务必填字段仍是服务端校验规则，但不再直接生成页面表单。
+移除固定任务状态栏、专用草稿弹窗和字段表单。`examples/chat-ui/task-ui.js` 已删除。业务必填字段仍是服务端校验规则，但不再直接生成页面表单。
 
 ### 模型生成交互
 
@@ -300,7 +301,7 @@ curl http://127.0.0.1:4318/chat \
 { "kind": "confirmation", "title": "是否确认发布这份内容？" }
 ```
 
-`web/interaction-ui.js` 仅渲染两种通用卡片。选项点击后作为用户消息发给模型；确认按钮调用 `POST /interactions/:id/confirm`，模型不能生成任意 URL、脚本、HTML 或动作。确认卡片正文绑定服务端实际草稿、主体和版本，避免模型描述与实际发布内容不一致。修改通过继续对话完成，之后由模型生成新卡片；旧卡片确认返回409。卡片出现本身不授予发布权限。
+`examples/chat-ui/interaction-ui.js` 仅渲染两种通用卡片。选项点击后作为用户消息发给模型；确认按钮调用 `POST /interactions/:id/confirm`，模型不能生成任意 URL、脚本、HTML 或动作。确认卡片正文绑定服务端实际草稿、主体和版本，避免模型描述与实际发布内容不一致。修改通过继续对话完成，之后由模型生成新卡片；旧卡片确认返回409。卡片出现本身不授予发布权限。
 
 ### 图片
 
@@ -317,3 +318,41 @@ curl http://127.0.0.1:4318/chat \
 ### 验证
 
 真实 DeepSeek 已识别上传测试图片的红色，并通过工具生成补问卡片；文章内容经模型整理后生成确认卡片，只有确认接口才产生Mock结果。测试覆盖非法交互类型/任意动作拒绝、草稿快照绑定、跨会话及旧版本确认拒绝、图片类型/大小和多模态传递。
+
+## 第八阶段：独立内容服务与集成边界
+
+当前本地 `.env` 已配置 `CONTENT_SERVICE_URL=http://127.0.0.1:4320`。用户确认后会真实保存到本地内容服务，而非Mock；不会调用线上业务系统。
+
+```text
+agent-harness/src/                         核心：循环、模型、上下文、工具执行、任务/交互协议
+agent-harness/integrations/content-service/ 可替换业务适配：案例/文章字段与HTTP发布
+agent-harness/examples/chat-ui/            验证用聊天客户端，可移除
+agent-harness/examples/local-app.ts        验证应用组合入口，npm start 使用此文件
+content-service-demo/                      独立项目：业务API、提交/展示页面、磁盘数据
+```
+
+依赖方向：examples → integrations + src；integrations → 核心类型/接口；内容服务不导入 Harness，核心不导入内容服务或业务预设。两个服务仅通过HTTP交换业务数据，没有共享数据目录、数据库、前端资源或跨项目源码依赖。
+
+启动独立内容服务：
+
+```bash
+cd /Users/cat/workspace/zhuangxiu/content-service-demo
+npm start
+```
+
+打开 http://127.0.0.1:4320/，可直接提交案例/文章并查看列表、详情。
+
+再启动验证应用：
+
+```bash
+cd /Users/cat/workspace/zhuangxiu/agent-harness
+npm start
+```
+
+打开 http://127.0.0.1:4318/，选择发布入口、上传图片、对话补全参数、点击模型生成的确认卡片。成功后返回内容服务详情链接。设置 `SERVE_DEMO_UI=false` 可关闭验证聊天页，仅保留API；移除 `CONTENT_SERVICE_URL` 则保留Mock发布，单元测试不依赖外部服务。
+
+适配器只接受本机HTTP地址。确认执行时，将 Harness 的内存图片复制到内容服务；内容服务按内容哈希持久保存图片，然后幂等提交案例/文章。因此已发布图片不依赖 Harness 继续运行。外部图片URL不自动抓取，验证时请直接上传图片。
+
+发布请求使用 `taskId:version:subjectId` 作为 Idempotency-Key。内容服务将幂等键与规范化请求内容绑定：相同键相同内容返回原结果，不同内容返回409。内容服务服务端再次校验字段，不依赖模型或Harness校验。服务不可用时任务进入failed，可按原版本和原键重试。
+
+这是本地验证系统：无认证、仅监听loopback；内容服务单进程JSON文件存储，不支持多实例并发写。Harness任务和会话仍在内存。后续接真实业务只替换 integration，内容服务及 examples 均不是核心资产。

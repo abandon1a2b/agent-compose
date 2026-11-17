@@ -7,8 +7,8 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/index.ts",
-    "dev": "node --watch --env-file-if-exists=.env src/index.ts",
+    "start": "node --env-file-if-exists=.env examples/local-app.ts",
+    "dev": "node --watch --env-file-if-exists=.env examples/local-app.ts",
     "test": "node --test test/*.test.ts",
     "check": "tsc --noEmit"
   },

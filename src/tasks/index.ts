@@ -1,10 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { HttpError, type Tool } from "../types.ts";
 import {
-  getPreset,
-  missingFields as validate,
-  parsePatch,
-  fieldSchemas,
+  createPresetRegistry,
+  type TaskDefinition,
   type Preset,
   type Draft,
 } from "./presets.ts";
@@ -25,10 +23,17 @@ export type Task = {
     | "succeeded"
     | "failed"
     | "cancelled";
-  result?: { mock: true; publicationId: string; message: string };
+  mode: "mock" | "local";
+  result?: {
+    mock: boolean;
+    publicationId: string;
+    message: string;
+    url?: string;
+  };
   error?: string;
 };
 export interface Publisher {
+  mode?: "mock" | "local";
   publish(
     preset: Preset,
     draft: Draft,
@@ -58,7 +63,15 @@ export class TaskManager {
   private bySession = new Map<string, string>();
   private inFlight = new Map<string, Promise<Task>>();
   private publisher: Publisher;
-  constructor(publisher: Publisher = new MockPublisher()) {
+  private registry: ReturnType<typeof createPresetRegistry>;
+  get definitions() {
+    return this.registry.definitions;
+  }
+  constructor(
+    publisher: Publisher = new MockPublisher(),
+    definitions: readonly TaskDefinition[] = [],
+  ) {
+    this.registry = createPresetRegistry(definitions);
     this.publisher = publisher;
   }
   ensure(sessionId: string, preset?: Preset) {
@@ -69,17 +82,22 @@ export class TaskManager {
       return existing;
     }
     if (!preset) return undefined;
+    this.registry.getPreset(preset);
     const t: Task = {
+      mode: this.publisher.mode ?? "mock",
       id: randomUUID(),
       sessionId,
       preset,
-      subject: { id: "mock-merchant-001", name: "演示商家（Mock）" },
+      subject:
+        this.publisher.mode === "local"
+          ? { id: "local-demo", name: "本地验证主体" }
+          : { id: "mock-merchant-001", name: "演示商家（Mock）" },
       version: 0,
       draft: {},
       missing: [],
       status: "collecting",
     };
-    t.missing = validate(t.draft, preset);
+    t.missing = this.registry.missingFields(t.draft, preset);
     this.tasks.set(t.id, t);
     this.bySession.set(sessionId, t.id);
     return structuredClone(t);
@@ -99,9 +117,9 @@ export class TaskManager {
       throw new HttpError(409, "草稿版本已变更，请刷新预览");
     if (!["collecting", "awaiting_confirmation", "failed"].includes(t.status))
       throw new HttpError(409, "当前任务不能修改");
-    t.draft = { ...t.draft, ...parsePatch(patch, t.preset) };
+    t.draft = { ...t.draft, ...this.registry.parsePatch(patch, t.preset) };
     t.version++;
-    t.missing = validate(t.draft, t.preset);
+    t.missing = this.registry.missingFields(t.draft, t.preset);
     t.status = t.missing.length ? "collecting" : "awaiting_confirmation";
     delete t.error;
     delete t.result;
@@ -124,7 +142,7 @@ export class TaskManager {
     if (this.inFlight.has(id)) return this.inFlight.get(id)!;
     if (t.status !== "awaiting_confirmation" && t.status !== "failed")
       throw new HttpError(409, "草稿未准备好或任务已取消");
-    if (validate(t.draft, t.preset).length)
+    if (this.registry.missingFields(t.draft, t.preset).length)
       throw new HttpError(409, "必填信息不完整");
     t.status = "approved";
     this.tasks.set(id, t);
@@ -154,17 +172,19 @@ export class TaskManager {
         `${t.id}:${t.version}:${t.subject.id}`,
       );
       t.status = "succeeded";
-    } catch {
+    } catch (error) {
       t.status = "failed";
-      t.error = "模拟发布失败，可确认重试同一版本";
+      t.error =
+        error instanceof HttpError
+          ? error.message
+          : "执行失败，可确认重试同一版本；已保留幂等键";
     }
     this.tasks.set(id, t);
     return structuredClone(t);
   }
   instructions(task: Task) {
-    return `你正在协助${getPreset(task.preset).title}。当前是Mock临时契约。仅收集本预设所需字段：${getPreset(
-      task.preset,
-    )
+    return `你正在协助${this.registry.getPreset(task.preset).title}。当前为${task.mode === "local" ? "本地验证服务，会真实保存到本地，不是线上发布" : "Mock模拟执行"}。仅收集本预设所需字段：${this.registry
+      .getPreset(task.preset)
       .fields.map((f) => f.label)
       .join(
         "、",
@@ -173,7 +193,7 @@ export class TaskManager {
   tools(sessionId: string): Tool[] {
     const t = this.forSession(sessionId);
     if (!t) return [];
-    const properties = fieldSchemas(t.preset);
+    const properties = this.registry.fieldSchemas(t.preset);
     return [
       {
         name: "get_task",
@@ -188,7 +208,7 @@ export class TaskManager {
       {
         name: "update_draft",
         description:
-          "仅将用户已提供的事实和整理后的内容写入草稿；禁止编造城市、面积、图片URL。修改后必须重新预览确认。",
+          "仅将用户已提供的事实和整理后的内容写入草稿；禁止编造事实或工具参数。修改后必须重新预览确认。",
         parameters: {
           type: "object",
           properties: {
@@ -208,7 +228,7 @@ export class TaskManager {
       {
         name: t.preset,
         description:
-          "发布当前已确认草稿；未通过页面确认时服务端拒绝。当前为Mock模拟发布。",
+          "发布当前已确认草稿；未通过页面确认时服务端拒绝。执行模式由服务端配置决定。",
         parameters: {
           type: "object",
           properties: {},

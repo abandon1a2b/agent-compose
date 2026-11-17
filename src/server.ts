@@ -1,6 +1,6 @@
 import { uploadImage, getImage } from "./images.ts";
 import type { Interactions } from "./interactions.ts";
-import { presets, isPreset } from "./tasks/presets.ts";
+
 import {
   createServer,
   type IncomingMessage,
@@ -58,7 +58,10 @@ async function readInput(request: IncomingMessage): Promise<ChatInput> {
   }
   if (compress !== undefined && typeof compress !== "boolean")
     throw new HttpError(400, "compress 必须是布尔值");
-  if (preset !== undefined && !isPreset(preset))
+  if (
+    preset !== undefined &&
+    (typeof preset !== "string" || preset.length > 64)
+  )
     throw new HttpError(400, "未知任务预设");
   if (stream !== undefined && typeof stream !== "boolean")
     throw new HttpError(400, "stream 必须是布尔值");
@@ -85,6 +88,7 @@ export function createHttpServer(
   tools: Tool[] = [],
   tasks?: TaskManager,
   interactions?: Interactions,
+  uiRoot?: URL,
 ) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -97,10 +101,10 @@ export function createHttpServer(
       ],
       "/app.css": ["app.css", "text/css; charset=utf-8"],
     };
-    if (request.method === "GET" && assets[path]) {
+    if (request.method === "GET" && uiRoot && assets[path]) {
       try {
         const [file, contentType] = assets[path];
-        const body = readFileSync(new URL(`../web/${file}`, import.meta.url));
+        const body = readFileSync(new URL(file, uiRoot));
         response.writeHead(200, {
           "content-type": contentType,
           "cache-control": "no-cache",
@@ -112,7 +116,7 @@ export function createHttpServer(
       return;
     }
     if (request.method === "GET" && path === "/presets")
-      return json(response, 200, presets);
+      return json(response, 200, tasks?.definitions ?? []);
     if (request.method === "GET" && path === "/health") {
       return json(response, 200, { status: "ok", modelMode });
     }

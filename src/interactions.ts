@@ -9,6 +9,7 @@ export type Card = {
   taskId?: string;
   version?: number;
   snapshot?: unknown;
+  result?: import("./tasks/index.ts").Task["result"];
   status: "pending" | "completed";
 };
 export const INTERACTION_RULES =
@@ -77,7 +78,8 @@ export class Interactions {
             card.snapshot = {
               subject: task.subject,
               draft: task.draft,
-              mock: true,
+              mock: task.mode === "mock",
+              mode: task.mode,
             };
           }
           this.cards.set(card.id, { sessionId, card });
@@ -97,7 +99,10 @@ export class Interactions {
       throw new HttpError(404, "确认卡片不存在");
     const card = record.card;
     const task = await tasks.confirm(card.taskId!, sessionId, card.version!);
-    if (task.status === "succeeded") card.status = "completed";
+    if (task.status === "succeeded") {
+      card.status = "completed";
+      card.result = task.result;
+    }
     return {
       card: structuredClone(card),
       result: task.result,

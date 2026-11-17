@@ -27,7 +27,14 @@ async function close(server: Server) {
 const signal = () => AbortSignal.timeout(5000);
 
 test("HTTP health, conversation continuation, isolated histories and input validation", async () => {
-  const server = createHttpServer(createChatHandler(mockModel, tools), "mock");
+  const server = createHttpServer(
+    createChatHandler(mockModel, tools),
+    "mock",
+    [],
+    undefined,
+    undefined,
+    new URL("../examples/chat-ui/", import.meta.url),
+  );
   const base = await listen(server);
   const post = (body: unknown) =>
     fetch(`${base}/chat`, {

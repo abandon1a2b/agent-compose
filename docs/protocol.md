@@ -67,7 +67,7 @@ The client cannot replace the bound revision or execution arguments. The task ma
 
 ## Images
 
-Upload raw bytes to `POST /images`, with `Content-Type: image/png`, `image/jpeg` or `image/webp`. Optional `X-File-Name` is URL-encoded. The response supplies an ID and local preview path.
+Upload raw bytes to `POST /images`, with `Content-Type: image/png`, `image/jpeg`, `image/webp`, `image/gif` or `image/avif`. Optional `X-File-Name` is URL-encoded. The response supplies an ID and local preview path.
 
 Pass IDs in `/chat`'s `images` array. The model adapter resolves them to multimodal content. `GET /images/:id` serves previews. Images are memory-only, not permanent business assets.
 

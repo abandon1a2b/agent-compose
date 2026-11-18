@@ -24,9 +24,14 @@ export function uploadImage(bytes: Buffer, mime: string, name: string) {
         : mime === "image/webp"
           ? bytes.toString("ascii", 0, 4) === "RIFF" &&
             bytes.toString("ascii", 8, 12) === "WEBP"
-          : false;
+          : mime === "image/gif"
+            ? ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+            : mime === "image/avif"
+              ? bytes.toString("ascii", 4, 8) === "ftyp" &&
+                ["avif", "avis"].includes(bytes.toString("ascii", 8, 12))
+              : false;
   if (!valid)
-    throw new HttpError(415, "只支持PNG、JPEG、WebP，文件内容必须匹配类型");
+    throw new HttpError(415, "只支持PNG、JPEG、WebP、GIF、AVIF，文件内容必须匹配类型");
   if (total + bytes.length > 64 * 1024 * 1024)
     throw new HttpError(429, "本地图片缓存已满，请重启服务后重试");
   const id = randomUUID();

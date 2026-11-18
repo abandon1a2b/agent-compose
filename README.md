@@ -198,7 +198,7 @@ Tests use local fixtures and protocol stubs; they do not require a real model ke
 - **No distributed workers or durable recovery:** external side effects must implement their own idempotency.
 - **Estimated token budgets:** compaction uses a heuristic, not an exact provider tokenizer.
 - **Lossy summaries:** preserve recent turns and validate important information with users.
-- **Image limits:** four images per message, 2 MB each; PNG/JPEG/WebP, 64 MB process cache.
+- **Image limits:** four images per message, 2 MB each; PNG/JPEG/WebP/GIF/AVIF, 64 MB process cache.
 - **Cooperative cancellation:** custom tools must respect their `AbortSignal`.
 
 These are explicit prototype boundaries, not production guarantees.

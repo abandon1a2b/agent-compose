@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { MockContentPublisher } from "../integrations/content-service/mock-publisher.ts";
 import { loadConfig } from "../src/config/index.ts";
 import { contentExecutors } from "../integrations/content-service/executors.ts";
@@ -76,6 +77,25 @@ const server = createHttpServer(
     ? undefined
     : new URL("./chat-ui/", import.meta.url),
   config.runtime,
+  new Map([
+    ["/settings", {
+      contentType: "text/html; charset=utf-8",
+      read: () => readFileSync(new URL("./chat-ui/settings.html", import.meta.url), "utf8"),
+    }],
+    ["/settings/scope.json", {
+      contentType: "application/json; charset=utf-8",
+      read: () => {
+        const { role, scope, taskSwitching, presets } = config.application;
+        return JSON.stringify({
+          role, scope, taskSwitching,
+          presets: presets.map(({ title, instructions, confirmationRequired, fields }) => ({
+            title, instructions, confirmationRequired,
+            fields: fields.map(({ label, required, draftBy }) => ({ label, required, draftBy })),
+          })),
+        });
+      },
+    }],
+  ]),
 );
 const port = Number(process.env.PORT ?? 4318);
 server.listen(port, "127.0.0.1", () => {

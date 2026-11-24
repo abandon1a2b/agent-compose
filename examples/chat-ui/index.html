@@ -28,6 +28,7 @@
           <span id="mode">正在连接</span></strong
         >
         <div class="header-right">
+          <a href="/settings" target="_blank" rel="noopener">助手工作范围</a>
           <span id="connection">连接中</span
           ><button id="open-tools">⌘ 工具与上下文</button>
         </div>
@@ -36,16 +37,10 @@
         <div id="welcome">
           <div class="welcome-mark">◈</div>
           <h1>有什么可以帮你？</h1>
-          <p>聊一个问题，或让工具帮你完成计算。</p>
+          <p>整理装修素材、撰写案例或发布文章。</p>
           <div class="suggestions">
             <span id="preset-entries"></span>
-            <button data-prompt="请调用工具获取当前 UTC 时间。">
-              ◷ 查询当前时间</button
-            ><button
-              data-prompt="请分两步调用calculate工具：先计算137乘29，再把结果加41。"
-            >
-              ＋ 试试连续计算</button
-            ><button data-prompt="你好，请简短介绍一下你能做什么。">
+            <button data-prompt="你好，请简短介绍一下你能做什么。">
               ↗ 开始聊聊
             </button>
           </div>
@@ -70,7 +65,7 @@
             ><input
               id="file-input"
               type="file"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
               multiple
               hidden
             />

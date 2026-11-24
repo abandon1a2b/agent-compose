@@ -28,14 +28,16 @@
           "label": "标题",
           "kind": "text",
           "required": true,
-          "maxLength": 200
+          "maxLength": 200,
+          "draftBy": "assistant"
         },
         {
           "name": "content",
           "label": "正文",
           "kind": "textarea",
           "required": true,
-          "maxLength": 12000
+          "maxLength": 12000,
+          "draftBy": "assistant"
         },
         {
           "name": "city",
@@ -80,14 +82,16 @@
           "label": "标题",
           "kind": "text",
           "required": true,
-          "maxLength": 200
+          "maxLength": 200,
+          "draftBy": "assistant"
         },
         {
           "name": "content",
           "label": "正文",
           "kind": "textarea",
           "required": true,
-          "maxLength": 12000
+          "maxLength": 12000,
+          "draftBy": "assistant"
         }
       ],
       "executor": "content.publishArticle",

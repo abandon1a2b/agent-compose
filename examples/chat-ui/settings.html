@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>助手工作范围 · Harness</title>
+  <style>
+    * { box-sizing: border-box }
+    body { margin: 0; color: #212522; background: #fff; font: 15px/1.7 Inter, "PingFang SC", system-ui, sans-serif }
+    main, nav { width: min(100% - 40px, 880px); margin: auto }
+    header { border-bottom: 1px solid #e6e8e6 }
+    nav { display: flex; align-items: center; justify-content: space-between; min-height: 58px }
+    nav strong { font-size: 19px; letter-spacing: -.04em }
+    a { color: #36594d; text-underline-offset: 4px }
+    main { padding: clamp(28px, 5vw, 62px) 0 60px }
+    h1, h2, h3, p { margin: 0 }
+    h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.2; letter-spacing: -.04em }
+    h2 { font-size: 18px; margin-bottom: 14px }
+    h3 { font-size: 15px }
+    #role { margin: 14px 0 28px; color: #565f59; max-width: 58ch }
+    .switch { display: flex; gap: 24px; border-bottom: 1px solid #dce2de; margin-bottom: 28px }
+    button { appearance: none; border: 0; border-bottom: 2px solid transparent; background: none; color: #5c655f; cursor: pointer; padding: 10px 0; font: inherit }
+    button[aria-pressed="true"] { color: #244e3f; border-color: currentColor; font-weight: 650 }
+    .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start }
+    .reply { padding: 20px 24px; background: #f1f5f2; border-radius: 12px }
+    blockquote { margin: 0; line-height: 1.9; overflow-wrap: anywhere }
+    ul { margin: 0; padding-left: 1.3em }
+    li { padding: 4px 0 } li::marker { color: #688a77 }
+    details { border-top: 1px solid #e3e7e4; padding: 14px 0 }
+    summary { font-weight: 600; cursor: pointer }
+    details p { color: #58625a; margin: 10px 0 }
+    #switching { margin-bottom: 18px }
+    [hidden] { display: none !important }
+    @media(max-width: 620px) { .columns { grid-template-columns: 1fr; gap: 24px } }
+  </style>
+</head>
+<body>
+  <header><nav><strong>Harness</strong><a href="/">返回对话</a></nav></header>
+  <main>
+    <h1>助手工作范围</h1>
+    <p id="status" role="status">正在读取当前配置…</p>
+    <div id="settings" hidden>
+      <p id="role"></p>
+      <div class="switch" aria-label="配置视图" role="group">
+        <button aria-controls="scope" aria-pressed="true">对话范围</button>
+        <button aria-controls="tasks" aria-pressed="false">任务规则</button>
+      </div>
+      <section id="scope" class="columns">
+        <div><h2>可以聊什么</h2><ul id="topics"></ul></div>
+        <div class="reply"><h2>遇到无关问题时的回复</h2><blockquote id="reply"></blockquote></div>
+      </section>
+      <section id="tasks" hidden><h2>可用任务</h2><p id="switching"></p><div id="presets"></div></section>
+    </div>
+  </main>
+  <script type="module">
+    const byId = id => document.getElementById(id);
+    function add(parent, tag, text) {
+      const node = document.createElement(tag);
+      node.textContent = text;
+      parent.append(node);
+      return node;
+    }
+    const buttons = document.querySelectorAll('.switch button');
+    for (const button of buttons) {
+      button.addEventListener('click', () => {
+        for (const item of buttons) {
+          const selected = item === button;
+          item.setAttribute('aria-pressed', String(selected));
+          byId(item.getAttribute('aria-controls')).hidden = !selected;
+        }
+      });
+    }
+    try {
+      const response = await fetch('/settings/scope.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error();
+      const config = await response.json();
+      byId('role').textContent = config.role;
+      byId('reply').textContent = config.scope.outOfScopeReply;
+      for (const topic of config.scope.allowedTopics) add(byId('topics'), 'li', topic);
+      byId('switching').textContent = config.taskSwitching.enabled
+        ? '切换任务时，当前草稿会暂停。' : '当前配置已关闭任务切换。';
+      if (!config.presets.length) add(byId('presets'), 'p', '当前未配置任务。');
+      for (const preset of config.presets) {
+        const item = document.createElement('details');
+        add(item, 'summary', preset.title);
+        add(item, 'p', preset.instructions);
+        add(item, 'h3', preset.confirmationRequired ? '执行前需要确认' : '可直接执行');
+        const list = document.createElement('ul');
+        for (const field of preset.fields) {
+          const source = field.draftBy === 'assistant' ? 'AI 起草' : '用户提供';
+          const requirement = field.required ? '发布时必填' : '选填';
+          add(list, 'li', field.label + '（' + source + ' · ' + requirement + '）');
+        }
+        item.append(list);
+        byId('presets').append(item);
+      }
+      byId('status').hidden = true;
+      byId('settings').hidden = false;
+    } catch {
+      byId('status').textContent = '配置读取失败，请刷新重试。';
+    }
+  </script>
+</body>
+</html>

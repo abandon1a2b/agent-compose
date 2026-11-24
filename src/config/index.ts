@@ -216,6 +216,7 @@ export function validateConfig(
           "label",
           "kind",
           "required",
+          "draftBy",
           "maxLength",
           "min",
           "max",
@@ -234,6 +235,7 @@ export function validateConfig(
       text(f.label, "field.label");
       if (
         !["text", "textarea", "number", "url-list"].includes(f.kind) ||
+        (f.draftBy !== undefined && !["assistant", "user"].includes(f.draftBy)) ||
         (f.required !== undefined && typeof f.required !== "boolean")
       )
         throw new Error("字段类型错误");

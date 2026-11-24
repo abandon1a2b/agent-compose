@@ -91,6 +91,7 @@ export function createHttpServer(
   interactions?: Interactions,
   uiRoot?: URL,
   runtime: { requestTimeoutMs?: number } = {},
+  uiPages?: ReadonlyMap<string, { contentType: string; read(): string }>,
 ) {
   return createServer(async (request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
@@ -104,10 +105,11 @@ export function createHttpServer(
       "/app.css": ["app.css", "text/css; charset=utf-8"],
       "/form-ui.js": ["form-ui.js", "text/javascript; charset=utf-8"],
     };
-    if (request.method === "GET" && uiRoot && assets[path]) {
+    const page = uiPages?.get(path);
+    if (request.method === "GET" && uiRoot && (page || assets[path])) {
       try {
-        const [file, contentType] = assets[path];
-        const body = readFileSync(new URL(file, uiRoot));
+        const contentType = page?.contentType ?? assets[path][1];
+        const body = page ? page.read() : readFileSync(new URL(assets[path][0], uiRoot));
         response.writeHead(200, {
           "content-type": contentType,
           "cache-control": "no-cache",

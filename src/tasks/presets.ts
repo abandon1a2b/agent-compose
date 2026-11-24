@@ -4,6 +4,7 @@ export type Field = {
   label: string;
   kind: "text" | "textarea" | "number" | "url-list";
   required?: boolean;
+  draftBy?: "assistant" | "user";
   maxLength?: number;
   min?: number;
   max?: number;

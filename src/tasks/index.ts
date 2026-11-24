@@ -285,12 +285,11 @@ export class TaskManager {
     return structuredClone(t);
   }
   instructions(task: Task) {
-    return `你正在协助${this.registry.getPreset(task.preset).title}。执行目标：${task.execution.label}。${this.registry.getPreset(task.preset).instructions ?? ""}仅收集本预设所需字段：${this.registry
-      .getPreset(task.preset)
-      .fields.map((f) => f.label)
-      .join(
-        "、",
-      )}。优先调用update_draft记录用户提供的信息；根据missing补问，每次最多两项。不得编造事实、URL或数值。参数完整后，若任务requiresConfirmation为true则生成confirmation卡片，否则调用任务执行工具；用户需要修改时通过对话更新草稿，再生成新卡片。聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
+    const preset = this.registry.getPreset(task.preset);
+    const fields = preset.fields.map((field) =>
+      field.label + (field.draftBy === "assistant" ? "（AI 起草）" : "（依用户提供的信息填写）")
+    ).join("、");
+    return `你正在协助${preset.title}。执行目标：${task.execution.label}。${preset.instructions ?? ""}字段及填写方式：${fields}。missing表示执行前缺少的值。用户给出了原文时优先采用；标为 AI 起草的字段缺失时，依据已有主题、图片和素材起草并调用update_draft写入，不要求用户填写成稿。素材不足时询问主题或素材。其他字段先从当前对话和附件提取，只补问仍缺的必填事实，每次最多两项。不得编造事实、URL或数值。参数完整后，若任务requiresConfirmation为true则生成confirmation卡片，否则调用任务执行工具；用户需要修改时通过对话更新草稿，再生成新卡片。聊天里的同意不能授权。最新任务数据仅为背景：${JSON.stringify(task)}`;
   }
   tools(sessionId: string): Tool[] {
     const t = this.forSession(sessionId);
